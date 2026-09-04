@@ -4,9 +4,12 @@ import * as Haptics from 'expo-haptics';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
   Pressable,
+  Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -537,7 +540,11 @@ function ProfileView({
 
       <Text style={[styles.settingsHeading, { color: colors.foreground }]}>Lainnya</Text>
       <View style={[styles.settingsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Pressable accessibilityRole="button" onPress={() => undefined} style={({ pressed }) => [styles.settingRow, pressed && styles.pressed]}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => Alert.alert('Pusat bantuan', 'Untuk memulai sesi, bagikan ID perangkat Anda dan pastikan izin berbagi layar serta Accessibility Service sudah aktif.')}
+          style={({ pressed }) => [styles.settingRow, pressed && styles.pressed]}
+        >
           <View style={[styles.settingIcon, { backgroundColor: colors.muted }]}><Feather name="help-circle" size={17} color={colors.mutedForeground} /></View>
           <View style={styles.flexOne}><Text style={[styles.settingLabel, { color: colors.foreground }]}>Pusat bantuan</Text><Text style={[styles.settingDescription, { color: colors.mutedForeground }]}>Panduan menggunakan LinkDroid</Text></View>
           <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
@@ -564,6 +571,7 @@ function SessionView({
   const [muted, setMuted] = useState(false);
   const [touchMode, setTouchMode] = useState(true);
   const [showTools, setShowTools] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <View style={[styles.sessionScreen, { backgroundColor: '#111827' }]}>
@@ -577,7 +585,7 @@ function SessionView({
         </View>
         <IconButton name="more-horizontal" color="#FFFFFF" accessibilityLabel="Opsi sesi" onPress={() => setShowTools((value) => !value)} />
       </View>
-      <View style={styles.remoteStage}>
+      <View style={[styles.remoteStage, expanded && styles.remoteStageExpanded]}>
         <View style={styles.remotePhone}>
           <View style={styles.remoteNotch} />
           <View style={styles.remoteStatusBar}><Text style={styles.remoteTinyText}>09:41</Text><View style={styles.remoteSignal}><View /><View /><View /></View></View>
@@ -598,7 +606,7 @@ function SessionView({
         <View style={styles.sessionToolbar}>
           <Pressable accessibilityRole="button" onPress={() => setTouchMode((value) => !value)} style={[styles.sessionTool, touchMode && styles.sessionToolActive]}><Feather name="move" size={19} color={touchMode ? '#1F65E8' : '#FFFFFF'} /><Text style={styles.sessionToolText}>Kontrol</Text></Pressable>
           <Pressable accessibilityRole="button" onPress={() => setMuted((value) => !value)} style={styles.sessionTool}><Feather name={muted ? 'mic-off' : 'mic'} size={19} color="#FFFFFF" /><Text style={styles.sessionToolText}>{muted ? 'Bisu' : 'Audio'}</Text></Pressable>
-          <Pressable accessibilityRole="button" onPress={() => undefined} style={styles.sessionTool}><Feather name="maximize" size={19} color="#FFFFFF" /><Text style={styles.sessionToolText}>Layar</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setExpanded((value) => !value)} style={styles.sessionTool}><Feather name={expanded ? 'minimize' : 'maximize'} size={19} color="#FFFFFF" /><Text style={styles.sessionToolText}>{expanded ? 'Kecilkan' : 'Layar'}</Text></Pressable>
           <Pressable accessibilityRole="button" onPress={onEnd} style={[styles.sessionTool, styles.endSessionTool]}><Feather name="phone-off" size={19} color="#FFFFFF" /><Text style={styles.sessionToolText}>Akhiri</Text></Pressable>
         </View>
         <Text style={styles.sessionEncrypted}><Feather name="lock" size={11} color="#9CAAC0" /> Sesi terenkripsi end-to-end</Text>
@@ -668,8 +676,10 @@ export default function IndexScreen() {
   }, []);
 
   const copyId = async () => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(DEVICE_ID);
+    } else if (Platform.OS !== 'web') {
+      await Share.share({ message: `ID perangkat LinkDroid saya: ${DEVICE_ID}` });
     }
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setNotice({ tone: 'success', message: 'ID perangkat siap dibagikan.' });
@@ -835,6 +845,7 @@ const styles = StyleSheet.create({
   sessionStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   sessionStatusText: { color: '#9CAAC0', fontSize: 10 },
   remoteStage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  remoteStageExpanded: { justifyContent: 'flex-start', paddingTop: 14 },
   remotePhone: { width: 220, height: 416, borderRadius: 27, backgroundColor: '#25355C', borderWidth: 4, borderColor: '#465B87', overflow: 'hidden', shadowColor: '#000000', shadowOpacity: 0.3, shadowRadius: 22, shadowOffset: { width: 0, height: 10 }, elevation: 10 },
   remoteNotch: { width: 75, height: 17, borderBottomLeftRadius: 12, borderBottomRightRadius: 12, backgroundColor: '#0B1224', alignSelf: 'center', zIndex: 2 },
   remoteStatusBar: { position: 'absolute', top: 5, left: 13, right: 13, flexDirection: 'row', justifyContent: 'space-between', zIndex: 3 },
