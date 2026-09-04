@@ -96,7 +96,8 @@ class MainActivity : ComponentActivity() {
         var notificationsEnabled by rememberSaveable {
             mutableStateOf(getPreferences(MODE_PRIVATE).getBoolean("notifications", true))
         }
-        var devices by remember { mutableStateOf(loadDevices()) }
+        val currentDeviceId = remember { getOrCreateDeviceId() }
+        var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
         val sessionCoordinator = remember { RemoteSessionCoordinator() }
         val activeRemoteSession by sessionCoordinator.session.collectAsState()
@@ -196,16 +197,18 @@ class MainActivity : ComponentActivity() {
             when (screen) {
                 AppScreen.HOME -> HomeScreen(
                     email = email.orEmpty(),
+                    deviceId = currentDeviceId,
                     activeSession = activeSession,
                     message = message,
                     onConnect = startRemoteSession,
-                    onShareId = { shareDeviceId() },
+                    onShareId = { shareDeviceId(currentDeviceId) },
                     onShareScreen = requestScreenShare,
                     modifier = Modifier.padding(padding),
                 )
 
                 AppScreen.DEVICES -> DevicesScreen(
                     devices = devices,
+                    currentDeviceId = currentDeviceId,
                     onConnect = startRemoteSession,
                     onAdd = { device ->
                         if (devices.any { it.id == device.id }) {
@@ -248,6 +251,7 @@ class MainActivity : ComponentActivity() {
 
                 AppScreen.SETTINGS -> SettingsScreen(
                     email = email.orEmpty(),
+                    backendBaseUrl = BuildConfig.BACKEND_BASE_URL,
                     notificationsEnabled = notificationsEnabled,
                     accessibilityEnabled = accessibilityEnabled,
                     isScreenSharing = isScreenSharing,
@@ -280,6 +284,8 @@ class MainActivity : ComponentActivity() {
                         isScreenSharing = false
                         getPreferences(MODE_PRIVATE).edit().remove("email").apply()
                         email = null
+                        activeSession = null
+                        message = null
                         screen = AppScreen.LOGIN
                     },
                     modifier = Modifier.padding(padding),
@@ -290,12 +296,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun shareDeviceId() {
+    private fun shareDeviceId(deviceId: String) {
         startActivity(
             Intent.createChooser(
                 Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, "Hubungkan ke perangkat LinkDroid saya dengan ID 884 512 307.")
+                    putExtra(Intent.EXTRA_TEXT, "Hubungkan ke perangkat LinkDroid saya dengan ID $deviceId.")
                 },
                 "Bagikan ID perangkat",
             ),
@@ -341,13 +347,24 @@ class MainActivity : ComponentActivity() {
             }
     }
 
-    private fun loadDevices(): List<Device> {
+    private fun getOrCreateDeviceId(): String {
+        val preferences = getPreferences(MODE_PRIVATE)
+        preferences.getString("device_id", null)?.let { return formatDeviceId(it) }
+        val generated = java.security.SecureRandom().nextInt(900_000_000) + 100_000_000
+        val deviceId = formatDeviceId(generated.toString())
+        preferences.edit().putString("device_id", deviceId).apply()
+        return deviceId
+    }
+
+    private fun loadDevices(currentDeviceId: String): List<Device> {
         val saved = getPreferences(MODE_PRIVATE).getStringSet("devices", null).orEmpty()
-        if (saved.isEmpty()) return defaultDevices
+        if (saved.isEmpty()) return defaultDevices(currentDeviceId)
         return saved.mapNotNull { encoded ->
             val values = encoded.split("~")
             if (values.size != 4) null else Device(values[0], values[1], values[2], values[3] == "1")
-        }.ifEmpty { defaultDevices }
+        }.map { device ->
+            if (device.platform.contains("Perangkat ini")) device.copy(id = currentDeviceId) else device
+        }.ifEmpty { defaultDevices(currentDeviceId) }
     }
 
     private fun saveDevices(devices: List<Device>) {
@@ -371,8 +388,8 @@ private enum class AppScreen { LOGIN, HOME, DEVICES, SESSION, SETTINGS }
 
 private data class Device(val id: String, val name: String, val platform: String, val online: Boolean)
 
-private val defaultDevices = listOf(
-    Device("884 512 307", "Samsung A54", "Android 14 • Perangkat ini", true),
+private fun defaultDevices(currentDeviceId: String) = listOf(
+    Device(currentDeviceId, "Perangkat ini", "Android • Perangkat ini", true),
     Device("221 095 648", "Xiaomi Pad 6", "Android 13 • 2 jam lalu", false),
     Device("731 440 219", "Galaxy S23", "Android 14 • Aktif sekarang", true),
 )
@@ -470,6 +487,7 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
 @Composable
 private fun HomeScreen(
     email: String,
+    deviceId: String,
     activeSession: String?,
     message: String?,
     onConnect: (String) -> Unit,
@@ -477,14 +495,14 @@ private fun HomeScreen(
     onShareScreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var deviceId by rememberSaveable { mutableStateOf("") }
+        var targetDeviceId by rememberSaveable { mutableStateOf("") }
     Page(modifier) {
         Header("Beranda", "Halo, ${email.substringBefore("@")}")
         if (message != null) Notice(message)
         Card(colors = CardDefaults.cardColors(containerColor = LinkDroidColors.primary)) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("ID perangkat Anda", color = Color.White.copy(alpha = .8f))
-                Text("884 512 307", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(deviceId, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("Online • Siap menerima koneksi", color = Color.White.copy(alpha = .85f))
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = onShareId, modifier = Modifier.fillMaxWidth()) { Text("Bagikan ID", color = Color.White) }
@@ -492,14 +510,14 @@ private fun HomeScreen(
         }
         SectionTitle("Hubungkan ke perangkat")
         OutlinedTextField(
-            value = deviceId,
-            onValueChange = { deviceId = it },
+            value = targetDeviceId,
+            onValueChange = { targetDeviceId = it },
             label = { Text("ID perangkat tujuan") },
             placeholder = { Text("Contoh: 221 095 648") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = { onConnect(deviceId) }, modifier = Modifier.fillMaxWidth()) { Text("Hubungkan") }
+        Button(onClick = { onConnect(targetDeviceId) }, modifier = Modifier.fillMaxWidth()) { Text("Hubungkan") }
         OutlinedButton(onClick = onShareScreen, modifier = Modifier.fillMaxWidth()) {
             Text("Aktifkan berbagi layar")
         }
@@ -510,6 +528,7 @@ private fun HomeScreen(
 @Composable
 private fun DevicesScreen(
     devices: List<Device>,
+    currentDeviceId: String,
     onConnect: (String) -> Unit,
     onAdd: (Device) -> Unit,
     onRemove: (Device) -> Unit,
@@ -567,7 +586,7 @@ private fun DevicesScreen(
                     if (device.online) {
                         Row {
                             TextButton(onClick = { onConnect(device.id) }) { Text("Mulai sesi") }
-                            if (device.id != "884 512 307") {
+                            if (device.id != currentDeviceId) {
                                 TextButton(onClick = { onRemove(device) }) { Text("Hapus") }
                             }
                         }
@@ -606,8 +625,9 @@ private fun SessionScreen(
                 ) { enabled -> if (enabled) onShareScreen() else onStopSharing() }
                 SettingRow(
                     "Audio sesi",
-                    "Aktif setelah koneksi remote tersambung",
+                    "Belum tersedia sampai audio transport diaktifkan",
                     audioEnabled,
+                    enabled = false,
                 ) { audioEnabled = it }
                 OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Akhiri sesi") }
             }
@@ -618,6 +638,7 @@ private fun SessionScreen(
 @Composable
 private fun SettingsScreen(
     email: String,
+    backendBaseUrl: String,
     notificationsEnabled: Boolean,
     accessibilityEnabled: Boolean,
     isScreenSharing: Boolean,
@@ -634,6 +655,9 @@ private fun SettingsScreen(
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(email, fontWeight = FontWeight.Bold)
                 Text("Akun lokal demo", color = LinkDroidColors.muted)
+                Text("Server produksi", fontWeight = FontWeight.Medium)
+                Text(backendBaseUrl, color = LinkDroidColors.muted, style = MaterialTheme.typography.bodySmall)
+                Text("Status: belum terhubung", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
                 SettingRow("Notifikasi sesi", "Terima status koneksi remote", notificationsEnabled, onNotificationsChanged)
                 SettingAction(
@@ -697,13 +721,19 @@ private fun SectionTitle(title: String) {
 }
 
 @Composable
-private fun SettingRow(title: String, description: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun SettingRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Text(description, color = LinkDroidColors.muted, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

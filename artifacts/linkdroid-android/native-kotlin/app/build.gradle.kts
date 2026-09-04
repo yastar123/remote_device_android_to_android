@@ -18,6 +18,16 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        release {
+            buildConfigField("String", "BACKEND_BASE_URL", "\"https://103-245-38-142.sslip.io\"")
+        }
+        debug {
+            buildConfigField("String", "BACKEND_BASE_URL", "\"https://103-245-38-142.sslip.io\"")
+        }
     }
 
     compileOptions {

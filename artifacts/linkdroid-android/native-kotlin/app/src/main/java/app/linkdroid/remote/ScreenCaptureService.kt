@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.app.Activity
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -44,6 +45,7 @@ class ScreenCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
+        if (resultCode != Activity.RESULT_OK) return START_NOT_STICKY
         val resultData = intent?.parcelableIntent(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
         releaseCapture()
         val manager = getSystemService(MediaProjectionManager::class.java)

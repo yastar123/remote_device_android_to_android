@@ -1,12 +1,24 @@
-# LinkDroid Android
+# LinkDroid Android Monorepo
 
-Repository ini khusus untuk aplikasi Android native berbasis Kotlin dan
-Jetpack Compose.
+Repository ini adalah satu repository untuk aplikasi Android native berbasis
+Kotlin dan Jetpack Compose. Tidak ada workspace web atau backend palsu yang
+disamarkan sebagai fitur remote.
 
-Tidak ada website, aplikasi Expo, server Node.js, atau workspace JavaScript
-dalam repository ini. Kemampuan Android seperti MediaProjection dan
+Kemampuan Android seperti MediaProjection dan
 Accessibility Service diimplementasikan langsung melalui Kotlin dan Android
 SDK.
+
+## Struktur repository
+
+- `artifacts/linkdroid-android/native-kotlin/` — satu-satunya project Gradle
+  Android yang menjadi source of truth aplikasi.
+- `SYSTEM_GAPS.md` — status fitur, blocker produksi, dan checklist launch.
+- `replit.md` — instruksi build dan batasan environment.
+
+Server signaling belum disertakan karena kontrak API, kredensial database, dan
+deployment server belum tersedia. Domain produksi yang disiapkan untuk
+integrasi adalah `https://103-245-38-142.sslip.io`; aplikasi belum mengirim
+request ke endpoint tersebut sampai backend memiliki kontrak yang tervalidasi.
 
 ## Build APK debug
 

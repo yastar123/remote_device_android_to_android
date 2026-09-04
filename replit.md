@@ -20,8 +20,21 @@ Buka folder `artifacts/linkdroid-android/native-kotlin` langsung di Android Stud
 untuk menjalankan aplikasi pada emulator atau perangkat fisik.
 
 Tombol Run Replit menjalankan perintah build Gradle yang sama. Build membutuhkan
-Android SDK dengan platform Android 35 dan build-tools yang sesuai; SDK tidak
-disimpan di repository dan `local.properties` tetap diabaikan oleh Git.
+Java dan Android SDK dengan platform Android 35 serta build-tools yang sesuai;
+SDK tidak disimpan di repository dan `local.properties` tetap diabaikan oleh
+Git. Jika SDK belum tersedia, workflow akan gagal dengan pesan lokasi SDK dan
+perlu dijalankan pada environment Android/Android Studio yang sudah memiliki
+platform tersebut.
+
+## Konfigurasi backend
+
+Domain TLS yang disiapkan untuk integrasi backend adalah:
+`https://103-245-38-142.sslip.io`
+
+Endpoint tersebut baru menjadi nilai konfigurasi build. Aplikasi saat ini belum
+memanggil API atau WebSocket karena backend/signaling dan kontraknya belum ada.
+Jangan menganggap tombol `Hubungkan` sebagai koneksi antarperangkat sebelum
+backend, autentikasi, signaling, dan WebRTC selesai.
 
 ## Stack
 
