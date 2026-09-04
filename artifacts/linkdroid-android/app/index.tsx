@@ -648,7 +648,11 @@ function BottomNav({
 
 export default function IndexScreen() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
+  const safeInsets = useSafeAreaInsets();
+  const insets = {
+    top: Platform.OS === 'web' ? Math.max(safeInsets.top, 67) : safeInsets.top,
+    bottom: Platform.OS === 'web' ? Math.max(safeInsets.bottom, 34) : safeInsets.bottom,
+  };
   const [view, setView] = useState<AppView>('login');
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState<Notice>(null);
@@ -747,19 +751,19 @@ const styles = StyleSheet.create({
   appShell: { flex: 1 },
   flexOne: { flex: 1 },
   pressed: { opacity: 0.75 },
-  loginContent: { flexGrow: 1, paddingHorizontal: 22, justifyContent: 'center' },
+  loginContent: { flexGrow: 1, width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 22, justifyContent: 'center' },
   loginBrand: { alignItems: 'center', marginBottom: 34 },
   brandMark: { width: 76, height: 76, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 17, shadowColor: '#1F65E8', shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 5 },
   brandMarkSmall: { width: 38, height: 38, borderRadius: 12, marginBottom: 0, shadowOpacity: 0, elevation: 0 },
   brandName: { fontSize: 27, fontWeight: '700', letterSpacing: -0.8 },
   brandTagline: { fontSize: 13, marginTop: 6 },
-  loginCard: { borderWidth: 1, borderRadius: 24, padding: 22, shadowColor: '#14213D', shadowOpacity: 0.05, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
+  loginCard: { width: '100%', maxWidth: 460, alignSelf: 'center', borderWidth: 1, borderRadius: 24, padding: 22, shadowColor: '#14213D', shadowOpacity: 0.05, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   loginTitle: { fontSize: 21, fontWeight: '700', letterSpacing: -0.3 },
   loginSubtitle: { fontSize: 13, marginTop: 7, marginBottom: 24, lineHeight: 19 },
   formGap: { gap: 9 },
   fieldLabel: { fontSize: 12, fontWeight: '600', marginTop: 3, marginBottom: 1 },
   inputWrap: { minHeight: 52, borderRadius: 14, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
-  textInput: { flex: 1, fontSize: 14, paddingHorizontal: 11, paddingVertical: 13 },
+  textInput: { flex: 1, minWidth: 0, fontSize: 14, paddingHorizontal: 11, paddingVertical: 13 },
   errorText: { fontSize: 12, marginTop: 9, lineHeight: 17 },
   primaryButton: { minHeight: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginTop: 18 },
   primaryButtonText: { fontSize: 14, fontWeight: '700' },
@@ -774,7 +778,7 @@ const styles = StyleSheet.create({
   header: { minHeight: 75, paddingHorizontal: 21, paddingTop: 12, paddingBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   eyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.1, marginBottom: 5 },
   screenTitle: { fontSize: 26, fontWeight: '700', letterSpacing: -0.6 },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 28 },
+  scrollContent: { width: '100%', maxWidth: 560, alignSelf: 'center', paddingHorizontal: 20, paddingBottom: 28 },
   deviceIdCard: { borderRadius: 22, padding: 20, overflow: 'hidden', marginTop: 8, minHeight: 170 },
   deviceIdGlow: { position: 'absolute', width: 190, height: 190, borderRadius: 95, right: -58, top: -72, backgroundColor: 'rgba(255,255,255,0.09)' },
   deviceIdTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -793,7 +797,7 @@ const styles = StyleSheet.create({
   secureBadgeText: { fontSize: 10, fontWeight: '700' },
   connectCard: { borderWidth: 1, borderRadius: 18, padding: 16 },
   connectInputWrap: { minHeight: 50, borderWidth: 1, borderRadius: 13, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, marginTop: 8 },
-  connectInput: { flex: 1, fontSize: 18, fontWeight: '600', letterSpacing: 1, paddingHorizontal: 11, paddingVertical: 12 },
+  connectInput: { flex: 1, minWidth: 0, fontSize: 18, fontWeight: '600', letterSpacing: 1, paddingHorizontal: 11, paddingVertical: 12 },
   viewAll: { fontSize: 12, fontWeight: '600' },
   deviceChips: { gap: 10, paddingBottom: 3 },
   deviceChip: { width: 190, minHeight: 68, borderWidth: 1, borderRadius: 16, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 9 },
@@ -805,11 +809,11 @@ const styles = StyleSheet.create({
   infoIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   infoTitle: { fontSize: 12, fontWeight: '700' },
   infoText: { fontSize: 11, lineHeight: 16, marginTop: 3 },
-  bottomNav: { minHeight: 67, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', paddingHorizontal: 18, paddingTop: 8 },
+  bottomNav: { width: '100%', maxWidth: 560, alignSelf: 'center', minHeight: 67, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', paddingHorizontal: 18, paddingTop: 8 },
   navItem: { flex: 1, alignItems: 'center', gap: 2 },
   navIcon: { width: 38, height: 29, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   navLabel: { fontSize: 10, fontWeight: '600' },
-  notice: { position: 'absolute', left: 16, right: 16, bottom: 74, minHeight: 47, borderRadius: 14, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, gap: 9, zIndex: 2, shadowColor: '#13213C', shadowOpacity: 0.08, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  notice: { position: 'absolute', left: 16, right: 16, maxWidth: 520, alignSelf: 'center', bottom: 74, minHeight: 47, borderRadius: 14, borderWidth: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 13, gap: 9, zIndex: 2, shadowColor: '#13213C', shadowOpacity: 0.08, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
   noticeText: { flex: 1, fontSize: 12, fontWeight: '600' },
   devicePageIntro: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   addButton: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
