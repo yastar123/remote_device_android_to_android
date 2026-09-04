@@ -7,6 +7,8 @@ LinkDroid membantu pengguna menghubungkan dan memberi dukungan jarak jauh antarp
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
+- `cd artifacts/linkdroid-android/native-kotlin && gradle assembleDebug` — build the native Android debug APK
+- Native APK output: `artifacts/linkdroid-android/native-kotlin/app/build/outputs/apk/debug/app-debug.apk`
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
@@ -24,13 +26,13 @@ LinkDroid membantu pengguna menghubungkan dan memberi dukungan jarak jauh antarp
 
 - `artifacts/linkdroid-android/app/index.tsx` — preview interaktif untuk login, beranda, perangkat, pengaturan, dan sesi remote.
 - `artifacts/linkdroid-android/constants/colors.ts` — token warna terang dengan aksen biru.
-- `artifacts/linkdroid-android/native-kotlin/` — fondasi native Kotlin untuk MediaProjection, Accessibility Service, dan foreground service.
+- `artifacts/linkdroid-android/native-kotlin/` — aplikasi Android native Kotlin + Jetpack Compose, MediaProjection, Accessibility Service, dan foreground service.
 - `artifacts/linkdroid-android/assets/images/linkdroid-icon.png` — ikon aplikasi LinkDroid.
 
 ## Architecture decisions
 
 - Preview mobile menggunakan Expo agar alur dan tampilan dapat dicoba lintas perangkat melalui preview.
-- Fondasi produksi native Android disiapkan dalam Kotlin karena screen capture dan kontrol sentuhan membutuhkan API Android khusus.
+- Output Android utama menggunakan aplikasi native Kotlin/Jetpack Compose karena screen capture dan kontrol sentuhan membutuhkan API Android khusus.
 - Akses remote harus selalu melalui persetujuan perangkat penerima; Accessibility Service tidak boleh diaktifkan diam-diam.
 - Penyimpanan lokal preview menggunakan AsyncStorage untuk sesi login dan daftar perangkat.
 

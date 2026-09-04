@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.content.pm.ServiceInfo
 import android.os.IBinder
 
 class ScreenCaptureService : Service() {
@@ -36,7 +37,15 @@ class ScreenCaptureService : Service() {
         val resultData = intent?.parcelableIntent(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
         val manager = getSystemService(MediaProjectionManager::class.java)
         projection = manager.getMediaProjection(resultCode, resultData)
-        startForeground(NOTIFICATION_ID, sessionNotification())
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                NOTIFICATION_ID,
+                sessionNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, sessionNotification())
+        }
         return START_STICKY
     }
 

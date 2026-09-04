@@ -1,15 +1,28 @@
-# LinkDroid native Android foundation
+# LinkDroid native Android app
 
-Folder ini berisi fondasi native Android berbasis Kotlin untuk build produksi.
-Preview interaktif di folder utama dipakai untuk memvalidasi alur dan tampilan
-tanpa membutuhkan Android SDK di lingkungan pengembangan ini.
+Folder ini adalah aplikasi Android native berbasis Kotlin dan Jetpack Compose.
+Preview Expo di folder utama tetap tersedia untuk validasi cepat, tetapi output
+produksi Android berasal dari proyek Gradle ini.
 
-Komponen native yang sudah disiapkan:
+## Build APK
+
+Dari folder `artifacts/linkdroid-android/native-kotlin` jalankan:
+
+```bash
+gradle assembleDebug
+```
+
+APK debug akan berada di:
+`app/build/outputs/apk/debug/app-debug.apk`
+
+Komponen native yang digunakan:
 
 - `MediaProjection` melalui foreground service untuk berbagi layar.
 - `AccessibilityService` untuk menerima aksi sentuhan dari perangkat pengendali.
 - `RemoteSessionCoordinator` sebagai state machine sesi.
 - Manifest permissions yang diperlukan Android modern.
+- UI login, beranda, daftar perangkat, sesi remote, dan pengaturan dalam Kotlin
+  Compose.
 
 ## Jalur produksi
 
