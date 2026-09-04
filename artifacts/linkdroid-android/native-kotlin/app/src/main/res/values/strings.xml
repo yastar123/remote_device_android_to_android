@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">LinkDroid</string>
+    <string name="accessibility_description">Dipakai untuk menjalankan aksi sentuhan yang disetujui selama sesi LinkDroid.</string>
+</resources>

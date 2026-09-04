@@ -1,0 +1,1 @@
+- [LinkDroid native and preview split](linkdroid-native-preview.md) — Keep the Expo preview and native Kotlin remote-control path aligned.
