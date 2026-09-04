@@ -1,11 +1,16 @@
 package app.linkdroid.remote
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,7 +74,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            getPreferences(MODE_PRIVATE).getBoolean("notifications", true)
+        ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
@@ -90,6 +98,8 @@ class MainActivity : ComponentActivity() {
         }
         var devices by remember { mutableStateOf(loadDevices()) }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
+        val sessionCoordinator = remember { RemoteSessionCoordinator() }
+        val activeRemoteSession by sessionCoordinator.session.collectAsState()
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -111,6 +121,42 @@ class MainActivity : ComponentActivity() {
                 message = "Berbagi layar aktif dan menunggu koneksi."
             } else {
                 message = "Izin berbagi layar belum diberikan."
+            }
+        }
+        val requestScreenShare = {
+            if (isScreenSharing) {
+                message = "Berbagi layar sudah aktif."
+            } else {
+                val manager = getSystemService(MediaProjectionManager::class.java)
+                captureLauncher.launch(manager.createScreenCaptureIntent())
+            }
+        }
+        val startRemoteSession: (String) -> Unit = { id ->
+            val normalized = id.filter(Char::isDigit)
+            when {
+                normalized.length != 9 -> {
+                    message = "Masukkan ID perangkat 9 digit."
+                }
+
+                activeRemoteSession != null -> {
+                    message = "Akhiri sesi aktif sebelum memulai sesi baru."
+                }
+
+                else -> {
+                    sessionCoordinator.start(
+                        RemoteSession(
+                            sessionId = "local-${System.currentTimeMillis()}",
+                            peerDeviceId = normalized,
+                            role = RemoteSession.Role.CONTROLLER,
+                        ),
+                    )
+                    activeSession = normalized
+                    screen = AppScreen.SESSION
+                    message = "Permintaan sesi dikirim. Menunggu persetujuan penerima."
+                    if (notificationsEnabled) {
+                        showSessionNotification("Menunggu persetujuan perangkat ${formatDeviceId(normalized)}.")
+                    }
+                }
             }
         }
 
@@ -152,34 +198,23 @@ class MainActivity : ComponentActivity() {
                     email = email.orEmpty(),
                     activeSession = activeSession,
                     message = message,
-                    onConnect = { id ->
-                        val normalized = id.filter(Char::isDigit)
-                        if (normalized.length == 9) {
-                            activeSession = normalized
-                            screen = AppScreen.SESSION
-                            message = "Permintaan sesi dikirim. Menunggu persetujuan penerima."
-                        } else {
-                            message = "Masukkan ID perangkat 9 digit."
-                        }
-                    },
+                    onConnect = startRemoteSession,
                     onShareId = { shareDeviceId() },
-                    onShareScreen = {
-                        val manager = getSystemService(MediaProjectionManager::class.java)
-                        captureLauncher.launch(manager.createScreenCaptureIntent())
-                    },
+                    onShareScreen = requestScreenShare,
                     modifier = Modifier.padding(padding),
                 )
 
                 AppScreen.DEVICES -> DevicesScreen(
                     devices = devices,
-                    onConnect = { id ->
-                        activeSession = id
-                        screen = AppScreen.SESSION
-                    },
+                    onConnect = startRemoteSession,
                     onAdd = { device ->
-                        devices = (devices + device).distinctBy { it.id }
-                        saveDevices(devices)
-                        message = "${device.name} ditambahkan."
+                        if (devices.any { it.id == device.id }) {
+                            message = "ID ${device.id} sudah ada di daftar perangkat."
+                        } else {
+                            devices = devices + device
+                            saveDevices(devices)
+                            message = "${device.name} ditambahkan."
+                        }
                     },
                     onRemove = { device ->
                         devices = devices.filterNot { it.id == device.id }
@@ -193,10 +228,7 @@ class MainActivity : ComponentActivity() {
                     deviceId = activeSession.orEmpty(),
                     message = message,
                     isScreenSharing = isScreenSharing,
-                    onShareScreen = {
-                        val manager = getSystemService(MediaProjectionManager::class.java)
-                        captureLauncher.launch(manager.createScreenCaptureIntent())
-                    },
+                    onShareScreen = requestScreenShare,
                     onStopSharing = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         isScreenSharing = false
@@ -204,6 +236,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onStop = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
+                        sessionCoordinator.stop()
+                        cancelSessionNotification()
                         isScreenSharing = false
                         activeSession = null
                         message = "Sesi remote diakhiri."
@@ -220,14 +254,20 @@ class MainActivity : ComponentActivity() {
                     onNotificationsChanged = {
                         notificationsEnabled = it
                         getPreferences(MODE_PRIVATE).edit().putBoolean("notifications", it).apply()
+                        if (it) {
+                            if (Build.VERSION.SDK_INT >= 33 &&
+                                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        } else {
+                            cancelSessionNotification()
+                        }
                     },
                     onAccessibility = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
-                    onScreenShare = {
-                        val manager = getSystemService(MediaProjectionManager::class.java)
-                        captureLauncher.launch(manager.createScreenCaptureIntent())
-                    },
+                    onScreenShare = requestScreenShare,
                     onStopSharing = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         isScreenSharing = false
@@ -235,6 +275,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onLogout = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
+                        sessionCoordinator.stop()
+                        cancelSessionNotification()
                         isScreenSharing = false
                         getPreferences(MODE_PRIVATE).edit().remove("email").apply()
                         email = null
@@ -260,6 +302,35 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun showSessionNotification(message: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                SESSION_NOTIFICATION_CHANNEL,
+                "Status sesi LinkDroid",
+                NotificationManager.IMPORTANCE_LOW,
+            ),
+        )
+        manager.notify(
+            SESSION_NOTIFICATION_ID,
+            Notification.Builder(this, SESSION_NOTIFICATION_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_menu_share)
+                .setContentTitle("Sesi LinkDroid")
+                .setContentText(message)
+                .setOngoing(true)
+                .build(),
+        )
+    }
+
+    private fun cancelSessionNotification() {
+        getSystemService(NotificationManager::class.java).cancel(SESSION_NOTIFICATION_ID)
+    }
+
     private fun isAccessibilityServiceEnabled(): Boolean {
         val manager = getSystemService(AccessibilityManager::class.java)
         return manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -282,8 +353,17 @@ class MainActivity : ComponentActivity() {
     private fun saveDevices(devices: List<Device>) {
         getPreferences(MODE_PRIVATE).edit().putStringSet(
             "devices",
-            devices.map { "${it.id}~${it.name}~${it.platform}~${if (it.online) "1" else "0"}" }.toSet(),
+            devices.map {
+                val safeName = it.name.replace("~", " ")
+                val safePlatform = it.platform.replace("~", " ")
+                "${it.id}~$safeName~$safePlatform~${if (it.online) "1" else "0"}"
+            }.toSet(),
         ).apply()
+    }
+
+    companion object {
+        private const val SESSION_NOTIFICATION_CHANNEL = "linkdroid-session-status"
+        private const val SESSION_NOTIFICATION_ID = 1002
     }
 }
 

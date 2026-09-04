@@ -27,6 +27,8 @@ class ScreenCaptureService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var projectionCallback: MediaProjection.Callback? = null
+    private val imageHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -43,17 +45,15 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val resultData = intent?.parcelableIntent(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
+        releaseCapture()
         val manager = getSystemService(MediaProjectionManager::class.java)
-        projection = manager.getMediaProjection(resultCode, resultData)
-        projection?.registerCallback(
-            object : MediaProjection.Callback() {
-                override fun onStop() {
-                    stopSelf()
-                }
-            },
-            Handler(Looper.getMainLooper()),
-        )
-        startVirtualDisplay()
+        projection = manager.getMediaProjection(resultCode, resultData) ?: return START_NOT_STICKY
+        projectionCallback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                stopSelf()
+            }
+        }
+        projection?.registerCallback(projectionCallback!!, imageHandler)
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(
                 NOTIFICATION_ID,
@@ -63,22 +63,19 @@ class ScreenCaptureService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, sessionNotification())
         }
+        startVirtualDisplay()
         return START_STICKY
     }
 
     override fun onDestroy() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
-        projection?.stop()
-        projection = null
+        releaseCapture()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startVirtualDisplay() {
+        val activeProjection = projection ?: return
         val metrics = resources.displayMetrics
         imageReader = ImageReader.newInstance(
             metrics.widthPixels,
@@ -86,7 +83,10 @@ class ScreenCaptureService : Service() {
             PixelFormat.RGBA_8888,
             2,
         )
-        virtualDisplay = projection?.createVirtualDisplay(
+        imageReader?.setOnImageAvailableListener({ reader ->
+            reader.acquireLatestImage()?.close()
+        }, imageHandler)
+        virtualDisplay = activeProjection.createVirtualDisplay(
             "LinkDroidScreen",
             metrics.widthPixels,
             metrics.heightPixels,
@@ -96,6 +96,20 @@ class ScreenCaptureService : Service() {
             null,
             null,
         )
+    }
+
+    private fun releaseCapture() {
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.setOnImageAvailableListener(null, null)
+        imageReader?.close()
+        imageReader = null
+        projectionCallback?.let { callback ->
+            projection?.unregisterCallback(callback)
+        }
+        projectionCallback = null
+        projection?.stop()
+        projection = null
     }
 
     private fun sessionNotification(): Notification =
