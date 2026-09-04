@@ -5,10 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 
 class ScreenCaptureService : Service() {
     companion object {
@@ -19,6 +25,8 @@ class ScreenCaptureService : Service() {
     }
 
     private var projection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -37,6 +45,15 @@ class ScreenCaptureService : Service() {
         val resultData = intent?.parcelableIntent(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
         val manager = getSystemService(MediaProjectionManager::class.java)
         projection = manager.getMediaProjection(resultCode, resultData)
+        projection?.registerCallback(
+            object : MediaProjection.Callback() {
+                override fun onStop() {
+                    stopSelf()
+                }
+            },
+            Handler(Looper.getMainLooper()),
+        )
+        startVirtualDisplay()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(
                 NOTIFICATION_ID,
@@ -50,12 +67,36 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
         projection?.stop()
         projection = null
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startVirtualDisplay() {
+        val metrics = resources.displayMetrics
+        imageReader = ImageReader.newInstance(
+            metrics.widthPixels,
+            metrics.heightPixels,
+            PixelFormat.RGBA_8888,
+            2,
+        )
+        virtualDisplay = projection?.createVirtualDisplay(
+            "LinkDroidScreen",
+            metrics.widthPixels,
+            metrics.heightPixels,
+            metrics.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null,
+            null,
+        )
+    }
 
     private fun sessionNotification(): Notification =
         Notification.Builder(this, CHANNEL_ID)

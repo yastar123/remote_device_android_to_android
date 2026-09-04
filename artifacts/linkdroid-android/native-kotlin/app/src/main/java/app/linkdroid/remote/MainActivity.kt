@@ -1,10 +1,13 @@
 package app.linkdroid.remote
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -41,6 +44,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +58,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import java.util.Locale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
@@ -78,6 +84,22 @@ class MainActivity : ComponentActivity() {
         var screen by rememberSaveable { mutableStateOf(if (email == null) AppScreen.LOGIN else AppScreen.HOME) }
         var activeSession by rememberSaveable { mutableStateOf<String?>(null) }
         var message by rememberSaveable { mutableStateOf<String?>(null) }
+        var isScreenSharing by rememberSaveable { mutableStateOf(false) }
+        var notificationsEnabled by rememberSaveable {
+            mutableStateOf(getPreferences(MODE_PRIVATE).getBoolean("notifications", true))
+        }
+        var devices by remember { mutableStateOf(loadDevices()) }
+        var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    accessibilityEnabled = isAccessibilityServiceEnabled()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         val captureLauncher = rememberLauncherForActivityResult(StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK && result.data != null) {
                 val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
@@ -85,6 +107,7 @@ class MainActivity : ComponentActivity() {
                     putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
+                isScreenSharing = true
                 message = "Berbagi layar aktif dan menunggu koneksi."
             } else {
                 message = "Izin berbagi layar belum diberikan."
@@ -139,6 +162,7 @@ class MainActivity : ComponentActivity() {
                             message = "Masukkan ID perangkat 9 digit."
                         }
                     },
+                    onShareId = { shareDeviceId() },
                     onShareScreen = {
                         val manager = getSystemService(MediaProjectionManager::class.java)
                         captureLauncher.launch(manager.createScreenCaptureIntent())
@@ -147,9 +171,20 @@ class MainActivity : ComponentActivity() {
                 )
 
                 AppScreen.DEVICES -> DevicesScreen(
+                    devices = devices,
                     onConnect = { id ->
                         activeSession = id
                         screen = AppScreen.SESSION
+                    },
+                    onAdd = { device ->
+                        devices = (devices + device).distinctBy { it.id }
+                        saveDevices(devices)
+                        message = "${device.name} ditambahkan."
+                    },
+                    onRemove = { device ->
+                        devices = devices.filterNot { it.id == device.id }
+                        saveDevices(devices)
+                        message = "${device.name} dihapus dari daftar."
                     },
                     modifier = Modifier.padding(padding),
                 )
@@ -157,8 +192,19 @@ class MainActivity : ComponentActivity() {
                 AppScreen.SESSION -> SessionScreen(
                     deviceId = activeSession.orEmpty(),
                     message = message,
+                    isScreenSharing = isScreenSharing,
+                    onShareScreen = {
+                        val manager = getSystemService(MediaProjectionManager::class.java)
+                        captureLauncher.launch(manager.createScreenCaptureIntent())
+                    },
+                    onStopSharing = {
+                        stopService(Intent(this, ScreenCaptureService::class.java))
+                        isScreenSharing = false
+                        message = "Berbagi layar dihentikan."
+                    },
                     onStop = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
+                        isScreenSharing = false
                         activeSession = null
                         message = "Sesi remote diakhiri."
                         screen = AppScreen.HOME
@@ -168,6 +214,13 @@ class MainActivity : ComponentActivity() {
 
                 AppScreen.SETTINGS -> SettingsScreen(
                     email = email.orEmpty(),
+                    notificationsEnabled = notificationsEnabled,
+                    accessibilityEnabled = accessibilityEnabled,
+                    isScreenSharing = isScreenSharing,
+                    onNotificationsChanged = {
+                        notificationsEnabled = it
+                        getPreferences(MODE_PRIVATE).edit().putBoolean("notifications", it).apply()
+                    },
                     onAccessibility = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
@@ -175,8 +228,14 @@ class MainActivity : ComponentActivity() {
                         val manager = getSystemService(MediaProjectionManager::class.java)
                         captureLauncher.launch(manager.createScreenCaptureIntent())
                     },
+                    onStopSharing = {
+                        stopService(Intent(this, ScreenCaptureService::class.java))
+                        isScreenSharing = false
+                        message = "Berbagi layar dihentikan."
+                    },
                     onLogout = {
                         stopService(Intent(this, ScreenCaptureService::class.java))
+                        isScreenSharing = false
                         getPreferences(MODE_PRIVATE).edit().remove("email").apply()
                         email = null
                         screen = AppScreen.LOGIN
@@ -188,11 +247,55 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun shareDeviceId() {
+        startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "Hubungkan ke perangkat LinkDroid saya dengan ID 884 512 307.")
+                },
+                "Bagikan ID perangkat",
+            ),
+        )
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val manager = getSystemService(AccessibilityManager::class.java)
+        return manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .any { info ->
+                val serviceInfo = info.resolveInfo?.serviceInfo
+                serviceInfo?.packageName == packageName &&
+                    serviceInfo.name == RemoteAccessibilityService::class.java.name
+            }
+    }
+
+    private fun loadDevices(): List<Device> {
+        val saved = getPreferences(MODE_PRIVATE).getStringSet("devices", null).orEmpty()
+        if (saved.isEmpty()) return defaultDevices
+        return saved.mapNotNull { encoded ->
+            val values = encoded.split("~")
+            if (values.size != 4) null else Device(values[0], values[1], values[2], values[3] == "1")
+        }.ifEmpty { defaultDevices }
+    }
+
+    private fun saveDevices(devices: List<Device>) {
+        getPreferences(MODE_PRIVATE).edit().putStringSet(
+            "devices",
+            devices.map { "${it.id}~${it.name}~${it.platform}~${if (it.online) "1" else "0"}" }.toSet(),
+        ).apply()
+    }
 }
 
 private enum class AppScreen { LOGIN, HOME, DEVICES, SESSION, SETTINGS }
 
 private data class Device(val id: String, val name: String, val platform: String, val online: Boolean)
+
+private val defaultDevices = listOf(
+    Device("884 512 307", "Samsung A54", "Android 14 • Perangkat ini", true),
+    Device("221 095 648", "Xiaomi Pad 6", "Android 13 • 2 jam lalu", false),
+    Device("731 440 219", "Galaxy S23", "Android 14 • Aktif sekarang", true),
+)
 
 private object LinkDroidColors {
     val background = Color(0xFFF7F9FC)
@@ -290,6 +393,7 @@ private fun HomeScreen(
     activeSession: String?,
     message: String?,
     onConnect: (String) -> Unit,
+    onShareId: () -> Unit,
     onShareScreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -303,7 +407,7 @@ private fun HomeScreen(
                 Text("884 512 307", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text("Online • Siap menerima koneksi", color = Color.White.copy(alpha = .85f))
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { }, modifier = Modifier.fillMaxWidth()) { Text("Bagikan ID", color = Color.White) }
+                OutlinedButton(onClick = onShareId, modifier = Modifier.fillMaxWidth()) { Text("Bagikan ID", color = Color.White) }
             }
         }
         SectionTitle("Hubungkan ke perangkat")
@@ -324,16 +428,51 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun DevicesScreen(onConnect: (String) -> Unit, modifier: Modifier = Modifier) {
-    val devices = remember {
-        listOf(
-            Device("884 512 307", "Samsung A54", "Android 14 • Perangkat ini", true),
-            Device("221 095 648", "Xiaomi Pad 6", "Android 13 • 2 jam lalu", false),
-            Device("731 440 219", "Galaxy S23", "Android 14 • Aktif sekarang", true),
-        )
-    }
+private fun DevicesScreen(
+    devices: List<Device>,
+    onConnect: (String) -> Unit,
+    onAdd: (Device) -> Unit,
+    onRemove: (Device) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var newName by rememberSaveable { mutableStateOf("") }
+    var newId by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
     Page(modifier) {
         Header("Perangkat", "Kelola perangkat yang tersimpan")
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Tambah perangkat", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it; error = null },
+                    label = { Text("Nama perangkat") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = newId,
+                    onValueChange = { newId = it; error = null },
+                    label = { Text("ID perangkat 9 digit") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (error != null) Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                Button(
+                    onClick = {
+                        val normalized = formatDeviceId(newId)
+                        if (newName.trim().isBlank() || normalized.filter(Char::isDigit).length != 9) {
+                            error = "Isi nama dan ID perangkat 9 digit."
+                        } else {
+                            onAdd(Device(normalized, newName.trim(), "Android • Baru ditambahkan", true))
+                            newName = ""
+                            newId = ""
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Simpan perangkat") }
+            }
+        }
         devices.forEach { device ->
             Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -346,7 +485,12 @@ private fun DevicesScreen(onConnect: (String) -> Unit, modifier: Modifier = Modi
                     }
                     Text(device.platform, color = LinkDroidColors.muted, style = MaterialTheme.typography.bodySmall)
                     if (device.online) {
-                        TextButton(onClick = { onConnect(device.id) }) { Text("Mulai sesi") }
+                        Row {
+                            TextButton(onClick = { onConnect(device.id) }) { Text("Mulai sesi") }
+                            if (device.id != "884 512 307") {
+                                TextButton(onClick = { onRemove(device) }) { Text("Hapus") }
+                            }
+                        }
                     }
                 }
             }
@@ -358,9 +502,13 @@ private fun DevicesScreen(onConnect: (String) -> Unit, modifier: Modifier = Modi
 private fun SessionScreen(
     deviceId: String,
     message: String?,
+    isScreenSharing: Boolean,
+    onShareScreen: () -> Unit,
+    onStopSharing: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var audioEnabled by rememberSaveable { mutableStateOf(false) }
     Page(modifier) {
         Header("Sesi remote", "Koneksi aman dengan perangkat tujuan")
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -371,6 +519,16 @@ private fun SessionScreen(
                 HorizontalDivider()
                 Text("Layar dan kontrol sentuhan hanya aktif setelah penerima menyetujui sesi.", color = LinkDroidColors.muted)
                 if (message != null) Notice(message)
+                SettingRow(
+                    "Berbagi layar",
+                    if (isScreenSharing) "MediaProjection aktif di perangkat ini" else "Belum dimulai",
+                    isScreenSharing,
+                ) { enabled -> if (enabled) onShareScreen() else onStopSharing() }
+                SettingRow(
+                    "Audio sesi",
+                    "Aktif setelah koneksi remote tersambung",
+                    audioEnabled,
+                ) { audioEnabled = it }
                 OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Akhiri sesi") }
             }
         }
@@ -380,12 +538,16 @@ private fun SessionScreen(
 @Composable
 private fun SettingsScreen(
     email: String,
+    notificationsEnabled: Boolean,
+    accessibilityEnabled: Boolean,
+    isScreenSharing: Boolean,
+    onNotificationsChanged: (Boolean) -> Unit,
     onAccessibility: () -> Unit,
     onScreenShare: () -> Unit,
+    onStopSharing: () -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var notifications by rememberSaveable { mutableStateOf(true) }
     Page(modifier) {
         Header("Pengaturan", "Izin dan akun LinkDroid")
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -393,9 +555,19 @@ private fun SettingsScreen(
                 Text(email, fontWeight = FontWeight.Bold)
                 Text("Akun lokal demo", color = LinkDroidColors.muted)
                 HorizontalDivider()
-                SettingRow("Notifikasi sesi", "Terima status koneksi remote", notifications) { notifications = it }
-                SettingAction("Berbagi layar", "Minta izin MediaProjection Android", onScreenShare)
-                SettingAction("Accessibility Service", "Izinkan kontrol sentuhan setelah persetujuan", onAccessibility)
+                SettingRow("Notifikasi sesi", "Terima status koneksi remote", notificationsEnabled, onNotificationsChanged)
+                SettingAction(
+                    "Berbagi layar",
+                    if (isScreenSharing) "MediaProjection sedang aktif" else "Minta izin MediaProjection Android",
+                    if (isScreenSharing) "Hentikan" else "Buka",
+                    if (isScreenSharing) onStopSharing else onScreenShare,
+                )
+                SettingAction(
+                    "Accessibility Service",
+                    if (accessibilityEnabled) "Aktif di pengaturan Android" else "Diperlukan untuk kontrol sentuhan remote",
+                    if (accessibilityEnabled) "Kelola" else "Buka",
+                    onAccessibility,
+                )
             }
         }
         OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Keluar") }
@@ -456,13 +628,13 @@ private fun SettingRow(title: String, description: String, checked: Boolean, onC
 }
 
 @Composable
-private fun SettingAction(title: String, description: String, onClick: () -> Unit) {
+private fun SettingAction(title: String, description: String, actionLabel: String, onClick: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Text(description, color = LinkDroidColors.muted, style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = onClick) { Text("Buka") }
+        TextButton(onClick = onClick) { Text(actionLabel) }
     }
 }
 
