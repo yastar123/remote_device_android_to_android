@@ -31,7 +31,8 @@ Fondasi aplikasi Android yang sudah tersedia:
 - Pengaturan notifikasi dan status Accessibility Service.
 - Penghentian sesi, penghentian screen sharing, notifikasi sesi, dan logout
   yang membersihkan state sesi lokal.
-- Build workflow Replit untuk menjalankan `gradle assembleDebug`.
+- Perintah Run Replit untuk menjalankan `gradle assembleDebug`; belum ada
+  workflow server atau workflow Android yang berhasil berjalan.
 
 Namun, aplikasi belum menjadi sistem remote-support end-to-end. Sebagian alur
 masih berjalan sebagai state lokal di satu perangkat dan belum berkomunikasi
@@ -41,21 +42,25 @@ dengan perangkat Android lain.
 
 | Area | Status | Keterangan |
 | --- | --- | --- |
-| Repository | Siap secara struktur | Satu repo dan satu project Android; metadata artefak web/backend tidak menjadi source aplikasi. |
-| Build APK | Terkonfigurasi, belum tervalidasi di environment ini | Workflow sudah ada, tetapi Android SDK platform 35 belum tersedia di environment Replit saat verifikasi. |
-| UI/menu | Tersedia | Login, Beranda, Perangkat, Sesi Remote, dan Pengaturan memiliki alur lokal. |
+| Repository | Siap secara struktur | Satu repo dengan satu project Gradle Android sebagai source aplikasi; folder metadata artefak import bukan source backend atau web. |
+| Konfigurasi build | Tersedia | `.replit` menjalankan `gradle assembleDebug` dan Java/Gradle tersedia. |
+| Build APK | Gagal di environment ini | Build berhenti sebelum kompilasi karena `ANDROID_HOME`/`ANDROID_SDK_ROOT` tidak ada dan Android SDK platform 35 tidak tersedia. |
+| UI/menu | Terimplementasi, belum diuji runtime | Kode memiliki Login, Beranda, Perangkat, Sesi Remote, dan Pengaturan, tetapi belum ada APK/emulator untuk membuktikan alurnya berjalan. |
 | Login produksi | Belum siap | Masih validasi dan penyimpanan lokal/demo. |
 | Device pairing | Belum siap | ID lokal belum didaftarkan atau diverifikasi server. |
-| Screen capture lokal | Tersedia setelah izin Android | MediaProjection dan foreground service sudah dibuat; belum ada pengiriman frame. |
+| Screen capture lokal | Terimplementasi, belum diuji perangkat | MediaProjection dan foreground service sudah dibuat; belum ada pengiriman frame dan belum diverifikasi di perangkat fisik. |
 | Remote control | Belum siap | Accessibility Service tersedia, tetapi belum menerima command dari peer. |
 | Signaling | Belum tersedia | Belum ada backend/WebSocket. |
 | WebRTC/video | Belum tersedia | Frame belum di-encode atau dikirim. |
 | Audio | Belum tersedia | Toggle ditampilkan nonaktif agar tidak mengklaim fitur yang belum ada. |
 | TLS/domain | Belum siap | Endpoint yang diberikan mengembalikan 502 saat pengecekan. |
 | Release signing | Belum tersedia | Belum ada keystore dan pipeline AAB/release. |
-| QA launch | Belum siap | Belum ada unit/instrumented test dan uji perangkat fisik. |
+| QA launch | Belum siap | Belum ada unit/instrumented test, APK yang berhasil dibuat di environment ini, atau uji perangkat fisik. |
 
-### Fitur lokal yang dapat diuji setelah APK ter-build
+### Alur yang sudah ditulis di kode, tetapi belum terverifikasi runtime
+
+Kode dimaksudkan untuk mendukung alur berikut setelah APK berhasil dibuat dan
+dijalankan pada emulator/perangkat:
 
 1. Masuk menggunakan email valid dan password minimal 6 karakter, atau tombol
    `Coba demo`.
@@ -70,9 +75,23 @@ dengan perangkat Android lain.
    kembali ke aplikasi.
 7. Mengaktifkan/mematikan notifikasi sesi, mengakhiri sesi, dan logout.
 
-Pengujian di atas belum berarti remote support antarperangkat sudah bekerja:
+Daftar di atas adalah kemampuan yang terlihat dari source code, bukan hasil
+pengujian berhasil pada perangkat. Pengujian di atas juga belum berarti remote
+support antarperangkat sudah bekerja:
 alur koneksi saat ini hanya mengubah state lokal sampai backend dan transport
 real-time tersedia.
+
+### Bukti verifikasi environment terakhir
+
+- `gradle help` berhasil.
+- `gradle assembleDebug` gagal sebelum kompilasi dengan pesan `SDK location not
+  found`.
+- `ANDROID_HOME` dan `ANDROID_SDK_ROOT` tidak ter-set; `sdkmanager` tidak
+  tersedia.
+- Tidak ada emulator atau perangkat Android yang terhubung untuk pengujian UI,
+  permission, service, dan menu.
+- `https://103-245-38-142.sslip.io/` merespons HTTP `502`.
+- `http://103-245-38-142.sslip.io/` merespons HTTP `301` menuju HTTPS.
 
 ## Prioritas kritis
 
@@ -151,7 +170,7 @@ ID perangkat utama sekarang dibuat lokal sekali dan disimpan di preferences,
 tetapi belum memiliki identitas server. Daftar perangkat awal tetap berupa
 data demo. Belum ada:
 
-- Device ID unik yang dibuat aman saat instalasi.
+- Device ID server-side atau pairing yang terautentikasi.
 - Registrasi device ke akun.
 - Rotasi atau pencabutan device.
 - Verifikasi kepemilikan perangkat.
