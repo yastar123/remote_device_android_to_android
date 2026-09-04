@@ -1,10 +1,10 @@
 ---
-name: LinkDroid native and preview split
-description: Why LinkDroid keeps a runnable mobile preview alongside native Android foundations.
+name: LinkDroid native Android direction
+description: The project is intentionally maintained as a Kotlin-only Android application.
 ---
 
-The LinkDroid product uses an Expo mobile preview for fast visual and flow validation, while the production Android path lives in the native-kotlin foundation.
+The LinkDroid repository is intentionally Kotlin-only. The Android app lives in the native Gradle project and should not regain an Expo, website, or Node workspace layer.
 
-**Why:** The Replit mobile artifact preview is available through Expo, but real Android remote control requires MediaProjection, Accessibility Service, and a native build.
+**Why:** The product depends on Android-only capabilities such as MediaProjection and Accessibility Service, and the user explicitly wants the repository to build an Android APK rather than a browser preview.
 
-**How to apply:** Keep preview interactions honest and permission-aware; implement screen streaming, authenticated signaling, session consent, and remote input transport in the native Kotlin path before calling the remote feature production-ready.
+**How to apply:** Keep UI, permission handling, capture, session state, and future signaling in Kotlin/Gradle. Do not add JavaScript preview artifacts as an alternative implementation.

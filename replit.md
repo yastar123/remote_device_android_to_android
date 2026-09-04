@@ -1,62 +1,44 @@
 # LinkDroid Android Remote
 
-LinkDroid membantu pengguna menghubungkan dan memberi dukungan jarak jauh antarperangkat Android dengan alur yang jelas dan aman.
+LinkDroid adalah aplikasi Android native yang seluruh UI dan kemampuan perangkatnya
+dibuat dengan Kotlin dan Jetpack Compose. Repository ini sengaja tidak lagi memiliki
+website, Expo, server Node.js, atau workspace JavaScript.
 
-## Run & Operate
+## Build APK
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `cd artifacts/linkdroid-android/native-kotlin && gradle assembleDebug` — build the native Android debug APK
-- Native APK output: `artifacts/linkdroid-android/native-kotlin/app/build/outputs/apk/debug/app-debug.apk`
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+Dari folder proyek Android:
+
+```bash
+cd artifacts/linkdroid-android/native-kotlin
+gradle assembleDebug
+```
+
+APK debug dibuat di:
+`artifacts/linkdroid-android/native-kotlin/app/build/outputs/apk/debug/app-debug.apk`
+
+Buka folder `artifacts/linkdroid-android/native-kotlin` langsung di Android Studio
+untuk menjalankan aplikasi pada emulator atau perangkat fisik.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Kotlin
+- Jetpack Compose Material 3
+- Android Gradle Plugin
+- MediaProjection dan foreground service
+- Accessibility Service untuk aksi sentuhan yang disetujui pengguna
+- SharedPreferences untuk sesi lokal dan daftar perangkat
 
-## Where things live
+## Struktur
 
-- `artifacts/linkdroid-android/app/index.tsx` — preview interaktif untuk login, beranda, perangkat, pengaturan, dan sesi remote.
-- `artifacts/linkdroid-android/constants/colors.ts` — token warna terang dengan aksen biru.
-- `artifacts/linkdroid-android/native-kotlin/` — aplikasi Android native Kotlin + Jetpack Compose, MediaProjection, Accessibility Service, dan foreground service.
-- `artifacts/linkdroid-android/assets/images/linkdroid-icon.png` — ikon aplikasi LinkDroid.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/MainActivity.kt` — UI native login, beranda, perangkat, sesi, dan pengaturan.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/ScreenCaptureService.kt` — foreground service dan VirtualDisplay.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/RemoteAccessibilityService.kt` — service kontrol sentuhan.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/RemoteSessionCoordinator.kt` — state machine sesi.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/AndroidManifest.xml` — activity, service, dan permission Android.
 
-## Architecture decisions
+## Prinsip keamanan
 
-- Preview mobile menggunakan Expo agar alur dan tampilan dapat dicoba lintas perangkat melalui preview.
-- Output Android utama menggunakan aplikasi native Kotlin/Jetpack Compose karena screen capture dan kontrol sentuhan membutuhkan API Android khusus.
-- Akses remote harus selalu melalui persetujuan perangkat penerima; Accessibility Service tidak boleh diaktifkan diam-diam.
-- Penyimpanan lokal preview menggunakan AsyncStorage untuk sesi login dan daftar perangkat.
-
-## Product
-
-- Login dan demo lokal.
-- ID perangkat pribadi dengan status online dan aksi berbagi.
-- Koneksi berdasarkan ID perangkat tujuan.
-- Daftar perangkat tersimpan, tambah perangkat, dan status online/offline.
-- Sesi remote visual dengan kontrol dasar, status koneksi, audio, layar, dan akhiri sesi.
-- Pengaturan izin perangkat dan keluar akun.
-
-## User preferences
-
-- Tampilan minimalis, clean, modern, dan elegan.
-- Layar pertama adalah form login.
-- Nuansa terang bersih dengan aksen biru solid.
-- Target aplikasi: remote antarperangkat Android, dibuat dengan teknologi Kotlin untuk fondasi native.
-
-## Gotchas
-
-- Kontrol Android sungguhan memerlukan MediaProjection, Accessibility Service, transport signaling/WebRTC, dan persetujuan eksplisit dari perangkat penerima.
-- Preview dapat diuji lewat workflow Expo; build native Kotlin memerlukan Android SDK/Gradle.
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Screen capture hanya aktif setelah dialog persetujuan MediaProjection Android.
+- Accessibility Service tidak diaktifkan diam-diam.
+- Sesi harus dapat dihentikan dari aplikasi.
+- Transport signaling/WebRTC terautentikasi masih diperlukan untuk koneksi antarperangkat nyata.
