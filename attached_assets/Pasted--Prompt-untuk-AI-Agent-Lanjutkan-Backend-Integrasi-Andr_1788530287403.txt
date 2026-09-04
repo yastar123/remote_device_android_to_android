@@ -1,0 +1,71 @@
+# Prompt untuk AI Agent — Lanjutkan Backend & Integrasi Android LinkDroid
+
+Salin seluruh isi di bawah ini dan berikan ke AI coding agent (Claude Code, Cursor, dll) sebagai instruksi awal.
+
+---
+
+## KONTEKS PROJECT
+
+Saya sedang membangun **LinkDroid**, aplikasi remote-support Android (mirip TeamViewer/AnyDesk) berbasis Kotlin + Jetpack Compose. Aplikasi Android sudah punya fondasi UI dan service, tetapi **backend belum ada sama sekali**. Tugasmu adalah membangun backend dari nol dan mempersiapkan kontrak API agar bisa diintegrasikan ke aplikasi Android.
+
+## STATUS APLIKASI ANDROID (SUDAH ADA)
+
+- Native Kotlin + Jetpack Compose
+- Login lokal/demo (belum terhubung ke server)
+- Navigasi: Beranda, Perangkat, Sesi Remote, Pengaturan
+- Daftar perangkat tersimpan lokal di SharedPreferences (device ID masih hardcoded/demo)
+- Permintaan izin MediaProjection sudah jalan
+- Foreground service untuk screen capture (VirtualDisplay sudah baca frame, **belum di-encode/dikirim**)
+- Accessibility Service untuk gesture (tap) sudah ada, **belum menerima perintah dari luar**
+- Toggle audio di UI, **belum ada capture/transport/playback**
+
+## STATUS VPS (SUDAH DISIAPKAN — Rocky Linux 8)
+
+**PostgreSQL:**
+- Sudah terinstall & running
+- Database: `linkdroid_db`, owner: `linkdroid`
+- User: `linkdroid` (password sudah di-set, disimpan aman oleh saya)
+- Auth mode: `md5`, akses dibatasi ke `localhost` saja
+- **Skema tabel BELUM dibuat** — database masih kosong
+
+**coturn (TURN/STUN server untuk WebRTC):**
+- Service jalan, port 3478 (STUN/TURN non-TLS) listening
+- Port 5349 (TURN-over-TLS) **statusnya belum terverifikasi** — perlu dicek ulang dengan `ss -tlnp | grep 5349` dan log coturn sebelum dianggap siap
+
+**Belum ada di VPS:**
+- Backend API / signaling server (kode belum ditulis)
+- Domain + TLS untuk backend API (baru TLS coturn yang diurus, itupun belum pasti beres)
+- File `.env` / konfigurasi environment
+- Firewall (firewalld) belum dikonfigurasi
+- Proses/PM2 untuk menjalankan backend
+
+## YANG HARUS DIBANGUN (PRIORITAS, SESUAI URUTAN)
+
+1. **Backend signaling + auth** (Node.js + Express + WebSocket + Prisma ORM ke PostgreSQL yang sudah ada)
+   - Auth: registrasi, login, JWT (access + refresh token)
+   - Registrasi & manajemen device ID (dibuat aman saat pairing, terikat ke akun user)
+   - Endpoint request/approve/reject/end session
+   - WebSocket signaling untuk relay offer/answer/ICE candidate (WebRTC)
+   - Endpoint untuk mengambil kredensial TURN (dari coturn yang sudah jalan di VPS) — jangan hardcode kredensial TURN di client
+2. **Kontrak API/WebSocket yang jelas** (dokumentasikan request/response JSON) supaya bisa diimplementasikan di sisi Kotlin
+3. **Skema database (Prisma migration)**: users, devices, sessions, audit log dasar
+4. **Validasi & keamanan dasar**: token sesi berumur pendek, one-active-session (jika perlu), rate limiting, tidak boleh ada secret di kode
+5. Setelah backend + kontrak API siap, baru bantu saya mengintegrasikan ke sisi Kotlin: WebRTC client, koneksi WebSocket, penyimpanan token aman (EncryptedSharedPreferences/DataStore), layar approve/reject sesi di penerima
+
+## HAL YANG PERLU KAMU TANYAKAN/KONFIRMASI KE SAYA SEBELUM MULAI CODING
+
+- Skema auth: JWT sederhana (email+password) cukup untuk MVP, atau ada preferensi lain?
+- Device ID: dibuat server-side saat pairing pertama kali, atau client generate lalu didaftarkan ke server?
+- Apakah backend akan pakai domain sendiri dengan TLS (Let's Encrypt), atau sementara HTTP/self-signed untuk development?
+- Struktur repo: monorepo (backend + android) atau repo terpisah?
+
+## BATASAN & PRINSIP
+
+- Jangan asumsikan ada infrastruktur yang belum saya konfirmasi — VPS baru menyediakan PostgreSQL dan coturn, sisanya harus dibangun dari nol.
+- Semua secret (JWT secret, DB password, TURN secret) lewat environment variable, tidak boleh di-commit ke repo.
+- Setelah backend jalan, saya akan deploy manual ke VPS menggunakan PM2 — pastikan kode kompatibel dengan itu (bukan Docker-only, kecuali saya minta lain).
+- Prioritaskan MVP yang benar-benar berfungsi end-to-end (signaling + approve/reject + WebRTC minimal) dibanding fitur lengkap tapi tidak terintegrasi.
+
+---
+
+**Referensi dokumen lengkap kekurangan sistem (opsional, lampirkan jika agent butuh detail lebih):** dokumen "Kekurangan Sistem LinkDroid" berisi 21 poin gap analysis mencakup signaling, WebRTC, alur approve sesi, kontrol remote, auth, device ID, storage, audio, notifikasi, otorisasi sesi, enkripsi, audit log, permission handling, testing, CI/CD, dan operasional produksi.
