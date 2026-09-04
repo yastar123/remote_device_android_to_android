@@ -50,10 +50,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.ColumnScope
@@ -67,6 +69,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
@@ -96,11 +99,40 @@ class MainActivity : ComponentActivity() {
         var notificationsEnabled by rememberSaveable {
             mutableStateOf(getPreferences(MODE_PRIVATE).getBoolean("notifications", true))
         }
+        var registrationStatus by rememberSaveable { mutableStateOf("Belum didaftarkan ke server") }
+        val registrationScope = rememberCoroutineScope()
         val currentDeviceId = remember { getOrCreateDeviceId() }
         var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
         val sessionCoordinator = remember { RemoteSessionCoordinator() }
         val activeRemoteSession by sessionCoordinator.session.collectAsState()
+        val registerCurrentDevice: () -> Unit = {
+            val registeredEmail = email
+            if (registeredEmail.isNullOrBlank()) {
+                registrationStatus = "Masuk terlebih dahulu untuk mendaftarkan device."
+            } else {
+                registrationStatus = "Sedang mendaftarkan device ke server..."
+                registrationScope.launch {
+                    runCatching {
+                        DeviceRegistrationClient.register(
+                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                            email = registeredEmail,
+                            deviceId = currentDeviceId,
+                            deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+                            androidVersion = Build.VERSION.RELEASE.orEmpty(),
+                            appVersion = BuildConfig.VERSION_NAME,
+                        )
+                    }.onSuccess {
+                        registrationStatus = "Device sudah terdaftar di server."
+                    }.onFailure { error ->
+                        registrationStatus = "Pendaftaran gagal: ${error.message ?: "server tidak dapat dihubungi"}"
+                    }
+                }
+            }
+        }
+        LaunchedEffect(email, currentDeviceId) {
+            if (!email.isNullOrBlank()) registerCurrentDevice()
+        }
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -252,6 +284,8 @@ class MainActivity : ComponentActivity() {
                 AppScreen.SETTINGS -> SettingsScreen(
                     email = email.orEmpty(),
                     backendBaseUrl = BuildConfig.BACKEND_BASE_URL,
+                    registrationStatus = registrationStatus,
+                    onRegisterDevice = registerCurrentDevice,
                     notificationsEnabled = notificationsEnabled,
                     accessibilityEnabled = accessibilityEnabled,
                     isScreenSharing = isScreenSharing,
@@ -286,6 +320,7 @@ class MainActivity : ComponentActivity() {
                         email = null
                         activeSession = null
                         message = null
+                        registrationStatus = "Belum didaftarkan ke server"
                         screen = AppScreen.LOGIN
                     },
                     modifier = Modifier.padding(padding),
@@ -639,6 +674,8 @@ private fun SessionScreen(
 private fun SettingsScreen(
     email: String,
     backendBaseUrl: String,
+    registrationStatus: String,
+    onRegisterDevice: () -> Unit,
     notificationsEnabled: Boolean,
     accessibilityEnabled: Boolean,
     isScreenSharing: Boolean,
@@ -657,7 +694,8 @@ private fun SettingsScreen(
                 Text("Akun lokal demo", color = LinkDroidColors.muted)
                 Text("Server produksi", fontWeight = FontWeight.Medium)
                 Text(backendBaseUrl, color = LinkDroidColors.muted, style = MaterialTheme.typography.bodySmall)
-                Text("Status: belum terhubung", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text(registrationStatus, color = if (registrationStatus.startsWith("Device sudah")) LinkDroidColors.success else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onRegisterDevice) { Text("Daftarkan ulang device") }
                 HorizontalDivider()
                 SettingRow("Notifikasi sesi", "Terima status koneksi remote", notificationsEnabled, onNotificationsChanged)
                 SettingAction(

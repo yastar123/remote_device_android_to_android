@@ -31,6 +31,9 @@ Fondasi aplikasi Android yang sudah tersedia:
 - Pengaturan notifikasi dan status Accessibility Service.
 - Penghentian sesi, penghentian screen sharing, notifikasi sesi, dan logout
   yang membersihkan state sesi lokal.
+- Pendaftaran device otomatis dari APK sudah diimplementasikan sebagai client:
+  setelah login, APK mencoba mengirim data device ke endpoint backend dan
+  menyediakan tombol pendaftaran ulang.
 - Perintah Run Replit untuk menjalankan `gradle assembleDebug`; belum ada
   workflow server atau workflow Android yang berhasil berjalan.
 
@@ -47,7 +50,7 @@ dengan perangkat Android lain.
 | Build APK | Gagal di environment ini | Build berhenti sebelum kompilasi karena `ANDROID_HOME`/`ANDROID_SDK_ROOT` tidak ada dan Android SDK platform 35 tidak tersedia. |
 | UI/menu | Terimplementasi, belum diuji runtime | Kode memiliki Login, Beranda, Perangkat, Sesi Remote, dan Pengaturan, tetapi belum ada APK/emulator untuk membuktikan alurnya berjalan. |
 | Login produksi | Belum siap | Masih validasi dan penyimpanan lokal/demo. |
-| Device pairing | Belum siap | ID lokal belum didaftarkan atau diverifikasi server. |
+| Device registration | Client tersedia, server belum siap | APK mencoba registrasi otomatis, tetapi endpoint backend belum dapat dihubungi dan belum ada autentikasi/pairing server. |
 | Screen capture lokal | Terimplementasi, belum diuji perangkat | MediaProjection dan foreground service sudah dibuat; belum ada pengiriman frame dan belum diverifikasi di perangkat fisik. |
 | Remote control | Belum siap | Accessibility Service tersedia, tetapi belum menerima command dari peer. |
 | Signaling | Belum tersedia | Belum ada backend/WebSocket. |
@@ -92,6 +95,30 @@ real-time tersedia.
   permission, service, dan menu.
 - `https://103-245-38-142.sslip.io/` merespons HTTP `502`.
 - `http://103-245-38-142.sslip.io/` merespons HTTP `301` menuju HTTPS.
+
+### Kontrak registrasi device yang dipakai APK
+
+Client APK sekarang mengirim:
+
+`POST https://103-245-38-142.sslip.io/api/v1/devices/register`
+
+Dengan JSON:
+
+```json
+{
+  "email": "akun pengguna",
+  "deviceId": "ID lokal 9 digit",
+  "deviceName": "manufacturer dan model Android",
+  "androidVersion": "versi Android",
+  "appVersion": "versi aplikasi"
+}
+```
+
+Respons HTTP `2xx` dianggap berhasil dan statusnya ditampilkan sebagai
+`Device sudah terdaftar di server`. Respons non-`2xx`, termasuk `502`, dianggap
+gagal dan ditampilkan di menu Pengaturan sehingga pengguna dapat mencoba
+pendaftaran ulang. Endpoint dan skema ini belum tersedia/terverifikasi di
+server, dan request belum memiliki access token karena login APK masih lokal.
 
 ## Prioritas kritis
 
@@ -167,8 +194,10 @@ Sistem produksi membutuhkan provider autentikasi atau backend yang aman.
 ### 6. Device ID belum terdaftar ke server
 
 ID perangkat utama sekarang dibuat lokal sekali dan disimpan di preferences,
-tetapi belum memiliki identitas server. Daftar perangkat awal tetap berupa
-data demo. Belum ada:
+t tetapi belum memiliki identitas server yang terverifikasi. APK sekarang
+mencoba mendaftarkan device ke endpoint pada bagian kontrak di atas, namun
+server belum merespons sukses. Daftar perangkat awal tetap berupa data demo.
+Belum ada:
 
 - Device ID server-side atau pairing yang terautentikasi.
 - Registrasi device ke akun.
