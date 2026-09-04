@@ -1,8 +1,8 @@
 # LinkDroid native Android app
 
 Folder ini adalah aplikasi Android native berbasis Kotlin dan Jetpack Compose.
-Preview Expo di folder utama tetap tersedia untuk validasi cepat, tetapi output
-produksi Android berasal dari proyek Gradle ini.
+Repository ini tidak menyediakan website, Expo, atau server JavaScript. Output
+aplikasi berasal langsung dari proyek Gradle ini.
 
 ## Build APK
 

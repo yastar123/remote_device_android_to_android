@@ -1,24 +1,5 @@
 kind = "mobile"
-previewPath = "/linkdroid/"
-title = "LinkDroid Android Remote"
-description = "A mobile remote-support app for connecting one Android device to another with a clear device ID, saved devices, and guided remote sessions."
+title = "LinkDroid Android native"
+description = "Native Kotlin Android application"
 version = "1.0.0"
 id = "artifacts/linkdroid-android"
-router = "expo-domain"
-
-[[services]]
-name = "expo"
-ensurePreviewReachable = "/status"
-paths = [ "/linkdroid/" ]
-localPort = 26027
-
-[services.development]
-run = "pnpm --filter @workspace/linkdroid-android run dev"
-
-[services.production]
-build = [ "pnpm", "--filter", "@workspace/linkdroid-android", "run", "build" ]
-run = [ "pnpm", "--filter", "@workspace/linkdroid-android", "run", "serve" ]
-
-[services.env]
-PORT = "26027"
-BASE_PATH = "/linkdroid/"

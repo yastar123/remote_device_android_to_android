@@ -1,15 +1,9 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
 # compiled output
-dist
-tmp
-out-tsc
-*.tsbuildinfo
-.expo
-.expo-shared
-
-# dependencies
-node_modules
+build/
+.gradle/
+out/
 
 # IDEs and editors
 /.idea
@@ -27,15 +21,13 @@ node_modules
 !.vscode/launch.json
 !.vscode/extensions.json
 
+# Android
+local.properties
+*.iml
+
 # misc
-/.sass-cache
 /connect.lock
 /coverage
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
 
 # System Files
 .DS_Store

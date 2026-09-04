@@ -19,6 +19,10 @@ APK debug dibuat di:
 Buka folder `artifacts/linkdroid-android/native-kotlin` langsung di Android Studio
 untuk menjalankan aplikasi pada emulator atau perangkat fisik.
 
+Tombol Run Replit menjalankan perintah build Gradle yang sama. Build membutuhkan
+Android SDK dengan platform Android 35 dan build-tools yang sesuai; SDK tidak
+disimpan di repository dan `local.properties` tetap diabaikan oleh Git.
+
 ## Stack
 
 - Kotlin
