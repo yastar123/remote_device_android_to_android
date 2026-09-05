@@ -17,9 +17,6 @@ Repository ini berisi:
   PostgreSQL, JWT, dan WebSocket.
 - `artifacts/linkdroid-android/.replit-artifact/artifact.toml` — metadata
   artifact Android.
-- `artifacts/api-server/.replit-artifact/artifact.toml` — metadata artifact
-  API yang menyatakan artifact web lama sudah dihapus; ini bukan source backend
-  yang aktif.
 - `.replit` — berisi perintah build APK:
   `cd artifacts/linkdroid-android/native-kotlin && gradle assembleDebug`.
 
@@ -37,11 +34,12 @@ di dalam artifact Android.
 | Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
 | JWT access/refresh token | Ada di backend dan client | Client memakai Keystore, refresh otomatis, rotasi, dan logout. |
 | Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
-| REST session lifecycle | Ada | Media WebRTC belum terhubung; command remote sudah memakai signaling WebSocket. |
-| WebSocket signaling relay | Ada dengan ping, aktivasi, reconnect, command, dan acknowledgment | Android belum membuat `PeerConnection` atau mengirim offer/answer/ICE dari alur UI. |
-| Screen capture lokal | Ada | Hanya membuat VirtualDisplay dan membaca lalu membuang frame. |
+| REST session lifecycle | Ada | Sesi mengatur request, approval, active, reject, end, dan expiry; keberhasilan lintas dua device belum dibuktikan. |
+| WebSocket signaling relay | Ada dengan ping, aktivasi, reconnect, SDP/ICE relay, command, dan acknowledgment | Signaling bukan media transport; koneksi WebRTC tetap perlu diuji pada dua device dan jaringan nyata. |
+| Screen capture lokal | Ada | Mode legacy hanya membaca lalu membuang frame; mode WebRTC membuat screen video track, tetapi belum teruji dua device. |
 | Accessibility service | Ada dan menerima command remote | Command tap, swipe, text, back, dan home divalidasi, dibatasi pada session, serta mengembalikan acknowledgment melalui signaling WebSocket. |
-| WebRTC/video/audio | Tidak ada | Tidak ada dependency atau implementasi `PeerConnection`. |
+| WebRTC/video | Ada implementasinya | Android memiliki `PeerConnection`, screen video track, offer/answer, ICE candidate, renderer controller, dan data channel; belum ada bukti runtime dua device. |
+| Audio remote | Tidak ada | Tidak ada audio source, audio track, atau audio renderer. |
 | Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif. |
 | Release build/signing | Belum ada | Belum ada keystore, signing config, AAB, atau pipeline release. |
 
@@ -116,21 +114,28 @@ Manifest mendeklarasikan:
 
 - meminta hasil persetujuan MediaProjection dari Activity;
 - membuat foreground service;
-- membuat `VirtualDisplay`;
-- membuat `ImageReader`;
-- mengambil image terbaru lalu langsung menutupnya;
+- pada mode capture legacy, membuat `VirtualDisplay` dan `ImageReader`, lalu
+  mengambil image terbaru dan langsung menutupnya;
+- pada mode WebRTC, menjaga foreground service tetap hidup sementara
+  `WebRtcSessionManager` memiliki `ScreenCapturerAndroid` dan mengirimkan video
+  track ke `PeerConnection`;
 - menghentikan capture saat service dihentikan atau projection berhenti.
 
-Dengan demikian, capture layar lokal memang dimulai, tetapi frame tidak
-di-encode, tidak disimpan, dan tidak dikirim ke perangkat lain.
+Jalur WebRTC sekarang meng-encode dan mengirim frame melalui video track. Jalur
+legacy `ScreenCaptureService` sendiri tetap bukan pipeline video karena frame
+`ImageReader` tidak disimpan atau dikirim.
 
 `RemoteAccessibilityService`:
 
 - terdaftar sebagai Accessibility Service;
 - tidak mengolah accessibility event;
-- memiliki fungsi `tap(x, y, durationMs)`.
+- memiliki fungsi gesture tap/swipe berbasis koordinat relatif;
+- dapat mengisi text pada field yang sedang fokus;
+- dapat menjalankan global action Back dan Home;
+- mengembalikan acknowledgment berhasil/gagal kepada pemanggil.
 
-Tidak ada jalur network yang memanggil fungsi tap tersebut.
+Jalur WebRTC data channel dan fallback signaling WebSocket dapat memanggil
+service ini setelah command lolos validasi.
 
 ## 4. Backend yang benar-benar tersedia
 
@@ -248,10 +253,16 @@ exponential backoff sampai 30 detik.
 - ping/pong dan reconnect dengan exponential backoff;
 - error signaling.
 
-Client tersebut memiliki method `sendSignal`, tetapi alur `MainActivity` saat ini
-tidak membuat object WebRTC dan tidak memanggil method itu untuk mengirim
-offer, answer, atau ICE candidate. Client juga memiliki `sendCommand` dan
-`sendCommandResult` untuk command remote berbasis signaling WebSocket.
+`MainActivity` membuat `WebRtcSessionManager` untuk session aktif. Controller
+membuat offer setelah session disetujui; receiver membuat answer setelah
+menerima offer; keduanya mengirim dan menerapkan ICE candidate melalui
+`SignalingClient.sendSignal`. Controller juga menampilkan remote video melalui
+`SurfaceViewRenderer`.
+
+`WebRtcSessionManager` memiliki data channel untuk command dan acknowledgment.
+Alur utama mencoba data channel terlebih dahulu lalu masih memakai signaling
+WebSocket sebagai fallback. Karena itu, implementasi data channel sudah ada,
+tetapi ketergantungan fallback dan keberhasilan runtime tetap perlu diuji.
 
 Ada file `DeviceRegistrationClient.kt` yang mengirim payload lama tanpa header
 Bearer dan tidak dipakai oleh alur utama `MainActivity`. Kontrak yang dipakai
@@ -259,7 +270,7 @@ alur utama adalah `BackendApiClient`.
 
 ## 6. Gap fungsional yang nyata
 
-### A. Remote support end-to-end belum ada
+### A. Remote support end-to-end masih belum terverifikasi
 
 Yang sudah ada hanya:
 
@@ -268,28 +279,34 @@ Yang sudah ada hanya:
 3. WebSocket memberitahukan request kepada Petugas.
 4. Petugas approve atau reject.
 5. Backend mengirim event status kepada participant.
-6. Android menampilkan state dan dapat menjalankan screen capture lokal.
-7. Controller dapat mengirim command tap, swipe, text, back, dan home melalui
-   signaling WebSocket setelah session disetujui.
+6. Android membuat `PeerConnection` setelah session aktif.
+7. Receiver mengambil screen capture dengan `ScreenCapturerAndroid` setelah
+   izin MediaProjection diberikan.
+8. Controller membuat offer; receiver menjawab dengan answer; ICE candidate
+   diteruskan melalui signaling WebSocket.
+9. Controller memiliki renderer untuk remote video.
+10. Controller dapat mengirim command melalui data channel, dengan fallback ke
+    signaling WebSocket; receiver menjalankan command dan mengirim hasil.
 
-Yang belum ada:
+Yang belum bisa diklaim hanya dari source:
 
-- `PeerConnection`;
-- offer/answer yang dibuat Android;
-- ICE gathering dan penerapan candidate;
-- pengambilan credential TURN dari Android;
-- pengiriman frame layar;
-- video renderer pada controller;
-- data channel;
-- metrik latency dan kualitas koneksi.
+- koneksi video dua device yang berhasil pada runtime;
+- keberhasilan ICE/STUN/TURN pada jaringan yang relevan;
+- metrik latency, bitrate, frame rate, dan kualitas koneksi;
+- pemulihan `PeerConnection` setelah process death, background, atau
+  perubahan jaringan.
 
-Tombol atau pesan “menunggu koneksi media” tidak sama dengan koneksi media
-yang sudah aktif.
+Tombol atau pesan “menunggu koneksi media” juga tidak sama dengan bukti bahwa
+koneksi media sudah aktif.
 
-### B. Kontrol remote melalui WebRTC belum terhubung
+### B. Kontrol remote melalui WebRTC sudah ditulis, tetapi fallback masih ada
 
-Accessibility Service menerima command remote melalui signaling WebSocket
-terautentikasi:
+Accessibility Service menerima command remote melalui dua jalur:
+
+- data channel WebRTC jika channel sudah `OPEN`;
+- signaling WebSocket sebagai fallback.
+
+Kedua jalur memakai:
 
 - schema command `tap`, `swipe`, `text`, `back`, dan `home`;
 - validasi koordinat rasio `0..1`, durasi gesture, dan panjang text;
@@ -299,8 +316,9 @@ terautentikasi:
 - acknowledgment berhasil/gagal dari perangkat receiver;
 - implementasi gesture dan global action pada Accessibility Service.
 
-Command saat ini masih memakai signaling WebSocket, bukan WebRTC data channel.
-Data channel tetap diperlukan agar kontrol tidak bergantung pada relay signaling.
+Gap yang tersisa adalah membuktikan data channel menjadi jalur normal pada
+koneksi nyata dan menentukan apakah fallback signaling dipertahankan sebagai
+mode pemulihan atau dihapus setelah stabil.
 
 ### C. Auth client masih memiliki batasan
 
@@ -435,7 +453,7 @@ Backend membutuhkan `.env` di root repository yang berisi `DATABASE_URL` dan
 tersedia ada di `backend/.env.example`. Tidak ada nilai production yang boleh
 diasumsikan dari source.
 
-### Verifikasi backend lokal terbaru
+### Verifikasi backend lokal yang tercatat
 
 Verifikasi berikut berhasil dilakukan pada workspace, bukan pada VPS:
 
@@ -493,11 +511,12 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 3. Jalankan migration, backend, dan health check secara terkontrol.
 4. Uji register/login/refresh/logout, pairing, heartbeat, task, dan session
    dengan dua akun.
-5. Tambahkan integrasi WebRTC Android: `PeerConnection`, offer/answer, ICE,
-   TURN, video frame, dan lifecycle connection.
-6. Pindahkan command remote dari relay WebSocket ke WebRTC data channel dan
-   tambahkan video renderer pada controller.
-7. Perbaiki pemulihan state lintas process death, Activity, dan service.
+5. Build APK dan uji alur WebRTC pada dua device: permission, offer/answer,
+   ICE, video renderer, data channel, fallback, dan reconnect.
+6. Uji TURN/STUN serta perilaku pada jaringan seluler, background, perubahan
+   jaringan, dan permission yang dicabut.
+7. Perbaiki pemulihan state lintas process death, Activity, service, dan
+   `PeerConnection`.
 8. Tambahkan test unit, integration, instrumented, lint, dan uji perangkat
    fisik.
 9. Lengkapi privacy/consent, logging, monitoring, backup, release signing, dan
@@ -513,11 +532,12 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 - [ ] Device registration, heartbeat, list, dan revoke diuji.
 - [ ] Request, approve, reject, dan end session diuji dengan dua akun.
 - [ ] WebSocket authentication dan reconnect diuji pada environment Android.
-- [ ] WebRTC video benar-benar mengirim frame ke controller.
+- [ ] WebRTC video benar-benar mengirim frame ke controller pada dua device.
 - [ ] TURN/STUN diuji pada jaringan yang relevan.
 - [x] Command remote melalui signaling WebSocket divalidasi dan memiliki
   timeout/error response.
-- [ ] Data channel command remote berjalan setelah WebRTC aktif.
+- [ ] Data channel command remote berhasil menjadi jalur normal setelah WebRTC
+  aktif; fallback signaling juga diuji.
 - [ ] Accessibility dan MediaProjection diuji pada versi Android target.
 - [ ] Background, process death, orientation, dan battery restriction diuji.
 - [ ] Customer task dan status lifecycle diuji.
@@ -531,15 +551,15 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 
 LinkDroid saat ini adalah fondasi aplikasi Android native dan backend API yang
 sudah memiliki auth, device pairing, heartbeat, customer task, request/
-approval session, audit log, relay WebSocket, serta command remote tervalidasi
-dengan acknowledgment. Screen capture lokal dan Accessibility Service sudah
-terhubung ke signaling command, tetapi belum terhubung ke WebRTC video/data
-transport.
+approval session, audit log, relay WebSocket, WebRTC video/data channel, serta
+command remote tervalidasi dengan acknowledgment. Screen capture,
+Accessibility Service, signaling SDP/ICE, renderer video, dan command data
+channel sudah ditulis di source.
 
-Sistem ini belum dapat disebut remote-support end-to-end karena belum memiliki
-WebRTC/video, data channel, deployment yang terverifikasi, dan pengujian dua
-perangkat. Refresh token client, expiry session backend, reconnect signaling,
-serta command remote melalui signaling sudah diimplementasikan, tetapi tetap
-perlu diuji pada environment Android dan jaringan yang relevan. Dokumentasi
-atau UI yang menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti
-bahwa koneksi media sudah aktif.
+Sistem ini belum boleh dianggap sebagai remote-support end-to-end yang
+terbukti karena build APK, pengujian dua perangkat, koneksi video runtime,
+TURN/STUN pada jaringan relevan, dan pemulihan setelah gangguan belum
+dibuktikan dari repository ini. Command masih memiliki fallback signaling
+WebSocket. Audio remote belum diimplementasikan. Dokumentasi atau UI yang
+menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti bahwa koneksi
+media sudah aktif.
