@@ -11,9 +11,22 @@ Panduan ini mengasumsikan:
 - Domain yang digunakan adalah `103-245-38-142.sslip.io`.
 - Nginx meneruskan traffic ke backend pada `127.0.0.1:3000`.
 - Server bersifat shared. Jangan mengubah atau menghapus proses aplikasi lain.
+- Template environment repository saat ini memakai database `LINKDROID` dan
+  user PostgreSQL `postgres`. Untuk production yang lebih aman, gunakan user
+  database khusus dan sesuaikan `DATABASE_URL`.
 
 Jika nilai domain, folder, port, atau proses di VPS berbeda, ganti nilainya
 secara konsisten di semua langkah.
+
+Kesiapan source sudah diverifikasi di workspace:
+
+- backend TypeScript berhasil dibuild;
+- Prisma Client berhasil dibuat;
+- server berhasil start di `127.0.0.1:3000`;
+- `GET /health` lokal mengembalikan database `up`.
+
+Verifikasi tersebut belum membuktikan PM2, Nginx, HTTPS, TURN, atau database
+production di VPS sudah aktif.
 
 ## 1. Arsitektur deployment
 
@@ -131,29 +144,39 @@ sudo systemctl enable --now postgresql
 sudo -u postgres psql -c '\l'
 ```
 
-Untuk instalasi baru, buat user dan database:
+Untuk mengikuti nilai database pada template saat ini, buat database
+`LINKDROID` jika belum ada:
+
+```bash
+sudo -u postgres createdb LINKDROID
+```
+
+Template saat ini memakai user PostgreSQL `postgres`. Ini praktis untuk setup
+awal, tetapi bukan pilihan ideal untuk production. Pilihan yang lebih aman
+adalah membuat user khusus, lalu mengubah `DATABASE_URL` di `.env`:
 
 ```bash
 sudo -u postgres createuser --pwprompt linkdroid
-sudo -u postgres createdb --owner=linkdroid linkdroid_db
+sudo -u postgres createdb --owner=linkdroid LINKDROID
 ```
 
-Jika user atau database sudah pernah dibuat, jangan menjalankan perintah di atas
+Jika database atau user sudah pernah dibuat, jangan menjalankan perintah di atas
 secara membabi buta. Periksa dahulu:
 
 ```bash
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='postgres'"
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='linkdroid'"
-sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='linkdroid_db'"
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='LINKDROID'"
 ```
 
 Uji koneksi memakai password yang sudah dibuat, tanpa menuliskannya ke shell
 history:
 
 ```bash
-read -s -p "Password PostgreSQL linkdroid: " LINKDROID_DB_PASSWORD
+read -s -p "Password PostgreSQL: " LINKDROID_DB_PASSWORD
 echo
 PGPASSWORD="$LINKDROID_DB_PASSWORD" psql \
-  "postgresql://linkdroid@127.0.0.1:5432/linkdroid_db" \
+  "postgresql://postgres@127.0.0.1:5432/LINKDROID" \
   -c 'SELECT 1;'
 unset LINKDROID_DB_PASSWORD
 ```
@@ -184,14 +207,18 @@ Isi minimal production:
 ```dotenv
 PORT=3000
 HOST=127.0.0.1
-DATABASE_URL=postgresql://linkdroid:PASSWORD_DATABASE@127.0.0.1:5432/linkdroid_db
+DATABASE_URL=postgresql://postgres:PASSWORD_DATABASE@localhost:5432/LINKDROID
 JWT_SECRET=GANTI_DENGAN_SECRET_ACAK_MINIMAL_32_KARAKTER
 JWT_ISSUER=linkdroid-api
 ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_DAYS=30
-CORS_ORIGIN=https://103-245-38-142.sslip.io
+CORS_ORIGIN=*
 ADMIN_INVITE_CODE=GANTI_DENGAN_KODE_INVITE_ADMIN
 ```
+
+`CORS_ORIGIN=*` mengikuti template repository saat ini. Setelah deployment
+berhasil, batasi nilainya ke origin yang memang diperlukan jika backend akan
+diakses dari browser.
 
 Untuk membuat secret acak tanpa menampilkan nilainya ke dokumen:
 
@@ -247,7 +274,7 @@ Sebelum migration pertama, backup database jika database bukan database kosong:
 sudo -u postgres pg_dump \
   --format=custom \
   --file="/root/linkdroid-backend-backup-$(date +%Y%m%d-%H%M%S).dump" \
-  linkdroid_db
+  LINKDROID
 ```
 
 Terapkan migration yang sudah ada di repository:
@@ -504,7 +531,7 @@ git log -1 --oneline
 sudo -u postgres pg_dump \
   --format=custom \
   --file="/root/linkdroid-backend-backup-$(date +%Y%m%d-%H%M%S).dump" \
-  linkdroid_db
+  LINKDROID
 ```
 
 Ambil source terbaru dan build:
@@ -574,7 +601,7 @@ test -s .env && stat -c '%a %n' .env
 
 ```bash
 sudo systemctl status postgresql --no-pager
-sudo -u postgres psql -d linkdroid_db -c 'SELECT 1;'
+sudo -u postgres psql -d LINKDROID -c 'SELECT 1;'
 cd /root/linkdroid-backend
 npm run backend:prisma:migrate
 ```
@@ -604,7 +631,8 @@ berjalan. Source Android saat ini belum memiliki implementasi WebRTC
 - [ ] Port `3000` kosong dan tidak digunakan aplikasi lain.
 - [ ] Repository berada di `/root/linkdroid-backend`.
 - [ ] PostgreSQL service aktif.
-- [ ] Database `linkdroid_db` dan user `linkdroid` tersedia.
+- [ ] Database `LINKDROID` tersedia.
+- [ ] User PostgreSQL pada `DATABASE_URL` tersedia dan memiliki akses ke `LINKDROID`.
 - [ ] `.env` root dibuat dengan permission `600`.
 - [ ] `DATABASE_URL` dan `JWT_SECRET` valid.
 - [ ] TURN credential hanya diisi jika sudah dikonfirmasi.

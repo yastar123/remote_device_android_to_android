@@ -33,8 +33,8 @@ di dalam artifact Android.
 | --- | --- | --- |
 | Aplikasi Android | Ada | Belum berarti berhasil dibuild atau diuji pada perangkat. |
 | UI Compose | Ada | Alur runtime belum dibuktikan dengan APK/emulator dari repository ini. |
-| Backend Express | Ada | Wajib memiliki environment dan PostgreSQL aktif. |
-| Prisma schema dan migration | Ada | Migration belum berarti sudah diterapkan ke database tertentu. |
+| Backend Express | Ada dan berhasil dibuild lokal | Tetap wajib memiliki environment dan PostgreSQL aktif saat dijalankan. |
+| Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
 | JWT access/refresh token | Ada di backend | Client menyimpan token, tetapi belum memiliki flow refresh otomatis. |
 | Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
 | REST session lifecycle | Ada | Media dan kontrol remote belum terhubung. |
@@ -417,9 +417,26 @@ npm run backend:dev
 npm run backend:start
 ```
 
-Backend membutuhkan `backend/.env` yang berisi `DATABASE_URL` dan `JWT_SECRET`
-minimal, serta database PostgreSQL yang sudah dibuat. Tidak ada nilai production
-yang boleh diasumsikan dari source.
+Backend membutuhkan `.env` di root repository yang berisi `DATABASE_URL` dan
+`JWT_SECRET` minimal, serta database PostgreSQL yang sudah dibuat. Template yang
+tersedia ada di `backend/.env.example`. Tidak ada nilai production yang boleh
+diasumsikan dari source.
+
+### Verifikasi backend lokal terbaru
+
+Verifikasi berikut berhasil dilakukan pada workspace, bukan pada VPS:
+
+- `npm run backend:build` berhasil.
+- `npm run backend:prisma:generate` berhasil dengan Prisma Client `6.19.0`.
+- `npm run backend:prisma:format` berhasil.
+- Backend berhasil listen pada `127.0.0.1:3000`.
+- `GET /health` mengembalikan HTTP `200` dengan `database: "up"`.
+- Proses backend menerima `SIGTERM` dan melakukan shutdown dengan bersih.
+
+Health check tersebut tidak membuktikan bahwa PM2, Nginx, HTTPS, TURN, atau
+database production di VPS sudah aktif. Validasi lokal juga menggunakan secret
+validasi sementara untuk proses tersebut; secret production tetap harus diisi
+sendiri pada `.env` VPS.
 
 ## 9. Status deployment
 
