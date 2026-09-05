@@ -37,6 +37,11 @@ data class BackendSessionResult(
     val status: String,
 )
 
+data class BackendSessionSummary(
+    val id: String,
+    val status: String,
+)
+
 data class BackendTaskSummary(
     val id: String,
     val fullName: String,
@@ -146,6 +151,22 @@ object BackendApiClient {
         )
         val session = response.getJSONObject("session")
         return BackendSessionResult(session.getString("id"), session.getString("status"))
+    }
+
+    suspend fun listSessions(baseUrl: String, accessToken: String): List<BackendSessionSummary> {
+        val response = request(baseUrl, "/api/v1/sessions", "GET", accessToken)
+        val sessions = response.optJSONArray("sessions") ?: JSONArray()
+        return buildList {
+            for (index in 0 until sessions.length()) {
+                val session = sessions.getJSONObject(index)
+                add(
+                    BackendSessionSummary(
+                        id = session.getString("id"),
+                        status = session.getString("status"),
+                    ),
+                )
+            }
+        }
     }
 
     suspend fun createCustomerTask(

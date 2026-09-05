@@ -56,7 +56,14 @@ type Client = { socket: WebSocket; user: AuthUser; deviceId: string };
 
 export class SignalingHub {
   private readonly clients = new Map<string, Set<Client>>();
-  private readonly commandTimeouts = new Map<string, { sessionId: string; timeout: NodeJS.Timeout }>();
+  private readonly commandTimeouts = new Map<
+    string,
+    { sessionId: string; timeout: NodeJS.Timeout }
+  >();
+  private readonly pendingSignals = new Map<
+    string,
+    Array<{ payload: string; expiresAt: number }>
+  >();
 
   attach(socket: WebSocket, user: AuthUser, deviceId: string) {
     const client = { socket, user, deviceId };
@@ -70,23 +77,58 @@ export class SignalingHub {
     socket.on("close", () => this.remove(client));
     socket.on("error", () => this.remove(client));
     socket.send(JSON.stringify({ type: "connected", deviceId }));
+    this.flushPendingSignals(client);
     void this.activateApprovedSessions(user.id, deviceId);
   }
 
   emitToUser(userId: string, message: unknown) {
     const payload = JSON.stringify(message);
     for (const client of this.clients.get(userId) ?? []) {
-      if (client.socket.readyState === WebSocket.OPEN) client.socket.send(payload);
+      if (client.socket.readyState === WebSocket.OPEN)
+        client.socket.send(payload);
     }
   }
 
   emitToDevice(userId: string, deviceId: string, message: unknown) {
     const payload = JSON.stringify(message);
+    let delivered = false;
     for (const client of this.clients.get(userId) ?? []) {
-      if (client.deviceId === deviceId && client.socket.readyState === WebSocket.OPEN) {
+      if (
+        client.deviceId === deviceId &&
+        client.socket.readyState === WebSocket.OPEN
+      ) {
         client.socket.send(payload);
+        delivered = true;
       }
     }
+    if (
+      !delivered &&
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "session.signal"
+    ) {
+      const key = this.deviceKey(userId, deviceId);
+      const pending = this.pendingSignals.get(key) ?? [];
+      pending.push({ payload, expiresAt: Date.now() + 30_000 });
+      this.pendingSignals.set(key, pending.slice(-64));
+    }
+  }
+
+  private flushPendingSignals(client: Client) {
+    const key = this.deviceKey(client.user.id, client.deviceId);
+    const pending = this.pendingSignals.get(key);
+    if (!pending) return;
+    const now = Date.now();
+    const remaining = pending.filter((item) => item.expiresAt > now);
+    if (client.socket.readyState === WebSocket.OPEN) {
+      for (const item of remaining) client.socket.send(item.payload);
+      this.pendingSignals.delete(key);
+    }
+  }
+
+  private deviceKey(userId: string, deviceId: string) {
+    return `${userId}:${deviceId}`;
   }
 
   private remove(client: Client) {
@@ -100,7 +142,9 @@ export class SignalingHub {
     try {
       message = signalSchema.parse(JSON.parse(raw));
     } catch {
-      client.socket.send(JSON.stringify({ type: "error", error: "INVALID_SIGNAL" }));
+      client.socket.send(
+        JSON.stringify({ type: "error", error: "INVALID_SIGNAL" }),
+      );
       return;
     }
 
@@ -116,19 +160,27 @@ export class SignalingHub {
       },
     });
     if (!session) {
-      client.socket.send(JSON.stringify({ type: "error", error: "SESSION_NOT_FOUND" }));
+      client.socket.send(
+        JSON.stringify({ type: "error", error: "SESSION_NOT_FOUND" }),
+      );
       return;
     }
     const isController =
-      session.requesterId === client.user.id && session.controllerDeviceId === client.deviceId;
+      session.requesterId === client.user.id &&
+      session.controllerDeviceId === client.deviceId;
     const isReceiver =
-      session.receiverId === client.user.id && session.receiverDeviceId === client.deviceId;
+      session.receiverId === client.user.id &&
+      session.receiverDeviceId === client.deviceId;
     if (!isController && !isReceiver) {
-      client.socket.send(JSON.stringify({ type: "error", error: "SESSION_FORBIDDEN" }));
+      client.socket.send(
+        JSON.stringify({ type: "error", error: "SESSION_FORBIDDEN" }),
+      );
       return;
     }
     if (!["APPROVED", "ACTIVE"].includes(session.status)) {
-      client.socket.send(JSON.stringify({ type: "error", error: "SESSION_NOT_ACTIVE" }));
+      client.socket.send(
+        JSON.stringify({ type: "error", error: "SESSION_NOT_ACTIVE" }),
+      );
       return;
     }
 
@@ -137,17 +189,23 @@ export class SignalingHub {
         where: { id: session.id },
         data: { updatedAt: new Date() },
       });
-      client.socket.send(JSON.stringify({ type: "session.pong", sessionId: session.id }));
+      client.socket.send(
+        JSON.stringify({ type: "session.pong", sessionId: session.id }),
+      );
       return;
     }
 
     if (message.type === "session.command") {
       if (!isController) {
-        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_FORBIDDEN" }));
+        client.socket.send(
+          JSON.stringify({ type: "error", error: "COMMAND_FORBIDDEN" }),
+        );
         return;
       }
       if (this.commandTimeouts.has(message.commandId)) {
-        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_IN_FLIGHT" }));
+        client.socket.send(
+          JSON.stringify({ type: "error", error: "COMMAND_IN_FLIGHT" }),
+        );
         return;
       }
       this.emitToDevice(session.receiverId, session.receiverDeviceId, {
@@ -169,21 +227,25 @@ export class SignalingHub {
           error: "COMMAND_TIMEOUT",
         });
       }, 15_000);
-      this.commandTimeouts.set(
-        message.commandId,
-        { sessionId: session.id, timeout },
-      );
+      this.commandTimeouts.set(message.commandId, {
+        sessionId: session.id,
+        timeout,
+      });
       return;
     }
 
     if (message.type === "session.command.result") {
       if (!isReceiver) {
-        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_RESULT_FORBIDDEN" }));
+        client.socket.send(
+          JSON.stringify({ type: "error", error: "COMMAND_RESULT_FORBIDDEN" }),
+        );
         return;
       }
       const pending = this.commandTimeouts.get(message.commandId);
       if (!pending || pending.sessionId !== session.id) {
-        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_NOT_FOUND" }));
+        client.socket.send(
+          JSON.stringify({ type: "error", error: "COMMAND_NOT_FOUND" }),
+        );
         return;
       }
       clearTimeout(pending.timeout);
@@ -199,8 +261,12 @@ export class SignalingHub {
       return;
     }
 
-    const targetUserId = isController ? session.receiverId : session.requesterId;
-    const targetDeviceId = isController ? session.receiverDeviceId : session.controllerDeviceId;
+    const targetUserId = isController
+      ? session.receiverId
+      : session.requesterId;
+    const targetDeviceId = isController
+      ? session.receiverDeviceId
+      : session.controllerDeviceId;
     this.emitToDevice(targetUserId, targetDeviceId, {
       type: "session.signal",
       sessionId: session.id,
@@ -227,17 +293,30 @@ export class SignalingHub {
         where: { id: session.id },
         data: { status: "ACTIVE" },
       });
-      this.emitToUser(session.requesterId, { type: "session.active", session: updated });
-      this.emitToUser(session.receiverId, { type: "session.active", session: updated });
+      this.emitToUser(session.requesterId, {
+        type: "session.active",
+        session: updated,
+      });
+      this.emitToUser(session.receiverId, {
+        type: "session.active",
+        session: updated,
+      });
     }
   }
 }
 
 export function createWebSocketServer(hub: SignalingHub) {
   const server = new WebSocketServer({ noServer: true });
-  server.on("connection", (socket: WebSocket, request: IncomingMessage, context: { user: AuthUser; deviceId: string }) => {
-    hub.attach(socket, context.user, context.deviceId);
-  });
+  server.on(
+    "connection",
+    (
+      socket: WebSocket,
+      request: IncomingMessage,
+      context: { user: AuthUser; deviceId: string },
+    ) => {
+      hub.attach(socket, context.user, context.deviceId);
+    },
+  );
   return server;
 }
 
@@ -245,7 +324,8 @@ export async function authenticateWebSocket(request: IncomingMessage) {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
   const token = requestUrl.searchParams.get("access_token");
   const deviceId = requestUrl.searchParams.get("device_id");
-  if (!token || !deviceId) throw new Error("WebSocket access_token and device_id are required");
+  if (!token || !deviceId)
+    throw new Error("WebSocket access_token and device_id are required");
   const user = verifyAccessToken(token);
   const device = await prisma.device.findFirst({
     where: { deviceId, userId: user.id, revokedAt: null },

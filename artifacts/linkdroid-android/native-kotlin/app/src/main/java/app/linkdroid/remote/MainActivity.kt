@@ -497,6 +497,18 @@ class MainActivity : ComponentActivity() {
                     registrationScope.launch {
                         runCatching {
                                 withAuthenticatedApi { token ->
+                                    BackendApiClient.listSessions(
+                                        baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                        accessToken = token,
+                                    ).filter { it.status in setOf("REQUESTED", "APPROVED", "ACTIVE") }
+                                        .forEach { session ->
+                                            BackendApiClient.endSession(
+                                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                                accessToken = token,
+                                                sessionId = session.id,
+                                            )
+                                        }
+                                    sessionCoordinator.stop()
                                     BackendApiClient.createSession(
                                         baseUrl = BuildConfig.BACKEND_BASE_URL,
                                         accessToken = token,
@@ -668,6 +680,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                         activeSession = incoming.controllerDeviceId
                                         message = "Monitoring disetujui. Menunggu koneksi media."
+                                        requestScreenShare()
                                     }.onFailure { error ->
                                         message = "Persetujuan gagal: ${error.message ?: "server tidak dapat dihubungi"}"
                                     }
