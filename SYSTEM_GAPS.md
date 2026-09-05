@@ -1,537 +1,504 @@
-# Status Kesiapan Launch LinkDroid
+# Status Sistem LinkDroid Saat Ini
 
-Dokumen ini mencatat fitur yang sudah tersedia, hasil verifikasi environment,
-dan bagian yang masih kurang dari sistem LinkDroid Android native berbasis
-Kotlin. Dokumen ini menjadi checklist sebelum aplikasi digunakan untuk
-dukungan remote antarperangkat secara nyata.
+Dokumen ini menggambarkan kondisi repository **apa adanya berdasarkan source
+code yang tersedia**, bukan klaim bahwa deployment VPS atau pengujian dua
+perangkat sudah berhasil. Dokumen ini dipakai untuk membedakan kemampuan yang
+memang sudah ditulis dari kemampuan yang masih berupa fondasi atau belum ada.
 
 **Pembaruan terakhir:** 5 September 2026
-**Struktur repository:** satu repository dengan satu project Gradle Android
-sebagai source of truth di `artifacts/linkdroid-android/native-kotlin/`
-**Endpoint produksi yang disiapkan:** `https://103-245-38-142.sslip.io`
 
-> Status penting: source backend LinkDroid sekarang tersedia di repository,
-> tetapi endpoint HTTPS masih merespons `502 Bad Gateway` karena backend belum
-> dideploy dan belum listen di `127.0.0.1:3000` pada VPS. HTTP merespons `301`
-> ke HTTPS. Jadi lapisan proxy siap, deployment aplikasi belum dilakukan.
+## 1. Struktur project yang sebenarnya
 
-## Infrastruktur VPS yang sudah tersedia
+Repository ini berisi:
 
-Data berikut berasal dari snapshot konfigurasi VPS per 5 September 2026:
+- `artifacts/linkdroid-android/native-kotlin/` — satu project Android native
+  Kotlin dengan Jetpack Compose.
+- `backend/` — source backend Node.js/TypeScript dengan Express, Prisma,
+  PostgreSQL, JWT, dan WebSocket.
+- `artifacts/linkdroid-android/.replit-artifact/artifact.toml` — metadata
+  artifact Android.
+- `artifacts/api-server/.replit-artifact/artifact.toml` — metadata artifact
+  API yang menyatakan artifact web lama sudah dihapus; ini bukan source backend
+  yang aktif.
+- `.replit` — berisi perintah build APK:
+  `cd artifacts/linkdroid-android/native-kotlin && gradle assembleDebug`.
 
-### Server dan reverse proxy
+Tidak ada source website atau workspace Expo yang menjadi bagian dari sistem
+ini. Backend yang aktif secara source berada di folder root `backend/`, bukan
+di dalam artifact Android.
 
-- VPS menggunakan Rocky Linux 8.
-- Server bersifat shared/multi-tenant. Aplikasi lain di server yang sama tidak
-  boleh terganggu.
-- Domain produksi: `103-245-38-142.sslip.io`.
-- Nginx memiliki konfigurasi terpisah untuk LinkDroid di
-  `/etc/nginx/conf.d/linkdroid-api.conf`.
-- Nginx meneruskan HTTPS ke `http://127.0.0.1:3000`.
-- Sertifikat TLS dikelola Certbot dan konfigurasi auto-renew sudah tersedia.
-- Header `Upgrade` dan `Connection: upgrade` sudah diteruskan, sehingga endpoint
-  WebSocket signaling dapat menggunakan `wss://103-245-38-142.sslip.io/...`.
-- `proxy_read_timeout` adalah 3600 detik untuk koneksi long-lived.
-- Port internal backend yang harus dipakai adalah `3000`; port ini tidak perlu
-  diekspos langsung ke internet.
+## 2. Status yang dapat dipastikan dari repository
 
-### Status layanan saat ini
-
-| Komponen | Status aktual | Catatan |
+| Komponen | Status dari source | Batasan |
 | --- | --- | --- |
-| Nginx | Tersedia | Konfigurasi LinkDroid terpisah dan sudah mengarah ke port 3000. |
-| HTTPS/TLS | Tersedia | Sertifikat dikelola Certbot. |
-| Backend LinkDroid | Source siap, belum berjalan di VPS | API Express/Prisma/WebSocket sudah dibuat; port 3000 VPS masih kosong dan ini penyebab `502 Bad Gateway`. |
-| PostgreSQL service | Tersedia dan berjalan | Hanya listen di `127.0.0.1:5432`. |
-| Database/user LinkDroid | Belum dibuat | Harus dibuat terpisah dari database aplikasi lain. |
-| coturn TURN/STUN | Berjalan | Listen di port 3478 TCP/UDP; realm dan metode kredensial masih perlu dikonfirmasi. |
-| Node.js | Tersedia | Versi yang tercatat di VPS adalah v24.20.0. |
-| PM2 | Tersedia | Proses LinkDroid belum berjalan; rencana nama proses `linkdroid-backend`. |
+| Aplikasi Android | Ada | Belum berarti berhasil dibuild atau diuji pada perangkat. |
+| UI Compose | Ada | Alur runtime belum dibuktikan dengan APK/emulator dari repository ini. |
+| Backend Express | Ada | Wajib memiliki environment dan PostgreSQL aktif. |
+| Prisma schema dan migration | Ada | Migration belum berarti sudah diterapkan ke database tertentu. |
+| JWT access/refresh token | Ada di backend | Client menyimpan token, tetapi belum memiliki flow refresh otomatis. |
+| Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
+| REST session lifecycle | Ada | Media dan kontrol remote belum terhubung. |
+| WebSocket signaling relay | Ada | Android belum membuat `PeerConnection` atau mengirim signal dari alur UI. |
+| Screen capture lokal | Ada | Hanya membuat VirtualDisplay dan membaca lalu membuang frame. |
+| Accessibility service | Ada | Hanya memiliki helper tap; belum menerima command remote. |
+| WebRTC/video/audio | Tidak ada | Tidak ada dependency atau implementasi `PeerConnection`. |
+| Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif. |
+| Release build/signing | Belum ada | Belum ada keystore, signing config, AAB, atau pipeline release. |
 
-### Rencana penempatan backend
+## 3. Aplikasi Android yang sudah tersedia
 
-Backend LinkDroid direncanakan berada di folder terpisah:
+### UI dan navigasi
 
-`/root/linkdroid-backend`
+Source Android menyediakan:
 
-Nama proses PM2 yang direncanakan:
+- Login dan pendaftaran akun melalui backend.
+- Pemilihan role `Admin` atau `Petugas` pada pendaftaran.
+- Navigasi Admin:
+  - Monitoring.
+  - Perangkat.
+  - Pengaturan.
+- Navigasi Petugas:
+  - Tugas.
+  - Pengaturan.
+- Form data pelanggan dengan field:
+  - nama lengkap;
+  - nomor meter/IDPEL 11–12 digit;
+  - alamat;
+  - desa/kelurahan;
+  - kecamatan;
+  - kabupaten/kota;
+  - provinsi.
+- Tombol `Demo ID` dengan contoh IDPEL `532819004521`.
+- Layar tahap PLN Mobile yang menampilkan data yang sudah dikirim dan status
+  berbagi layar.
+- Dialog masuk untuk permintaan monitoring pada perangkat Petugas.
+- Tombol menyetujui atau menolak permintaan monitoring.
+- Tombol menghentikan sesi dan berbagi layar.
+- Pengaturan permission notifikasi, status Accessibility Service, dan status
+  pendaftaran device.
 
-`linkdroid-backend`
+### Penyimpanan lokal
 
-Proses tersebut harus berjalan berdampingan dengan aplikasi lain tanpa mengubah
-konfigurasi atau proses aplikasi lain. Perintah start baru dapat dijalankan
-setelah source backend dan hasil build tersedia.
+Aplikasi menggunakan `Activity.getPreferences(MODE_PRIVATE)` untuk menyimpan:
 
-### TURN/STUN untuk WebRTC
+- email;
+- role;
+- access token;
+- refresh token;
+- ID device lokal;
+- daftar device lokal;
+- preferensi notifikasi.
 
-coturn sudah berjalan di port `3478` pada IP publik VPS dan localhost. Aplikasi
-Android nantinya dapat menggunakan ICE server seperti:
+Daftar device lokal disimpan sebagai `StringSet` dengan data yang digabung
+menggunakan separator `~`. Belum ada Room, database lokal, migrasi format,
+atau enkripsi khusus untuk penyimpanan tersebut.
 
-`turn:103.245.38.142:3478`
+ID device lokal dibuat sekali menggunakan angka acak 9 digit dan disimpan di
+preferences aplikasi. ID ini bukan kredensial akses; backend tetap memerlukan
+Bearer access token dan memeriksa kepemilikan device.
 
-Namun isi `/etc/turnserver.conf` belum tercatat dalam repository, sehingga
-`realm`, `static-auth-secret`, username/password, dan dukungan `turns:` belum
-terkonfirmasi. Kredensial TURN tidak boleh ditulis di source code atau
-`SYSTEM_GAPS.md`.
+### Permission dan service Android
 
-### Keamanan VPS
+Manifest mendeklarasikan:
 
-- Server shared/multi-tenant harus diperlakukan sebagai lingkungan yang tidak
-  boleh diubah secara global untuk kebutuhan LinkDroid.
-- Terdapat catatan percobaan login SSH yang gagal dan traffic scan bot pada
-  aplikasi lain. Ini bukan bukti kompromi domain LinkDroid, tetapi menunjukkan
-  kebutuhan hardening.
-- Password database, JWT secret, kredensial TURN, dan secret aplikasi harus
-  disimpan melalui environment/secrets, bukan di repository.
-- Hardening SSH dan fail2ban masih menjadi pekerjaan operasional yang belum
-  selesai.
+- `INTERNET`;
+- `FOREGROUND_SERVICE`;
+- `FOREGROUND_SERVICE_MEDIA_PROJECTION`;
+- `POST_NOTIFICATIONS`;
+- `ScreenCaptureService`;
+- `RemoteAccessibilityService`.
 
-## Ringkasan kondisi saat ini
+`ScreenCaptureService`:
 
-Fondasi aplikasi Android yang sudah tersedia:
+- meminta hasil persetujuan MediaProjection dari Activity;
+- membuat foreground service;
+- membuat `VirtualDisplay`;
+- membuat `ImageReader`;
+- mengambil image terbaru lalu langsung menutupnya;
+- menghentikan capture saat service dihentikan atau projection berhenti.
 
-- Aplikasi native Kotlin dengan Jetpack Compose.
-- Login lokal/demo dengan validasi email dan panjang password.
-- Pilihan peran lokal `Admin` atau `Petugas` saat login.
-- Navigasi Beranda, Perangkat, Sesi Remote, dan Pengaturan.
-- Dashboard Admin untuk memasukkan ID device petugas dan memulai permintaan
-  pemantauan.
-- Beranda Petugas yang menampilkan ID device lokal untuk dibagikan kepada Admin.
-- Form Data pelanggan untuk:
-  - Nama Lengkap Pelanggan sesuai KTP/Rekening Listrik.
-  - Nomor Meter / ID Pelanggan (IDPEL) 11–12 digit.
-  - Alamat Lengkap.
-  - Desa / Kelurahan.
-  - Kecamatan.
-  - Kabupaten / Kota.
-  - Provinsi melalui dropdown.
-- Tombol `Demo ID` untuk mengisi contoh IDPEL `532819004521`.
-- Validasi form dan tombol `Kembali` serta `Simpan & Lanjut`.
-- Layar tahap PLN Mobile dengan status data siap diproses dan kontrol
-  MediaProjection untuk berbagi layar.
-- Penyimpanan daftar perangkat secara lokal menggunakan `SharedPreferences`,
-  termasuk penambahan, pencegahan ID duplikat, koneksi dari daftar, dan hapus.
-- ID perangkat lokal dibuat sekali saat instalasi dan ditampilkan saat berbagi,
-  bukan lagi ID perangkat yang ditulis tetap di alur utama.
-- Permintaan izin MediaProjection.
-- Foreground service untuk screen capture.
-- Accessibility Service untuk menjalankan gesture.
-- Pengaturan notifikasi dan status Accessibility Service.
-- Penghentian sesi, penghentian screen sharing, notifikasi sesi, dan logout
-  yang membersihkan state sesi lokal.
-- Pendaftaran device otomatis dari APK sudah diimplementasikan sebagai client:
-  setelah login, APK mencoba mengirim data device ke endpoint backend dan
-  menyediakan tombol pendaftaran ulang.
-- Backend Node.js di `backend/` sudah memiliki JWT auth/refresh, pairing device,
-  heartbeat, task pelanggan, session lifecycle, audit log, Prisma schema dan
-  migration, serta WebSocket signaling.
-- APK sudah memanggil auth server, pairing device ber-token, heartbeat,
-  request/approve/reject session, submit task pelanggan, dan list task Admin.
-- Perintah Run Replit untuk menjalankan `gradle assembleDebug`; belum ada
-  workflow server atau workflow Android yang berhasil berjalan.
+Dengan demikian, capture layar lokal memang dimulai, tetapi frame tidak
+di-encode, tidak disimpan, dan tidak dikirim ke perangkat lain.
 
-Namun, aplikasi belum menjadi sistem remote-support end-to-end. REST session dan
-WebSocket approval sudah ditulis, tetapi media WebRTC, data channel kontrol,
-deployment VPS, dan pengujian dua perangkat fisik belum selesai.
+`RemoteAccessibilityService`:
 
-## Matriks kesiapan launch
+- terdaftar sebagai Accessibility Service;
+- tidak mengolah accessibility event;
+- memiliki fungsi `tap(x, y, durationMs)`.
 
-| Area | Status | Keterangan |
-| --- | --- | --- |
-| Repository | Siap secara struktur | Satu repo dengan satu project Gradle Android sebagai source aplikasi; folder metadata artefak import bukan source backend atau web. |
-| Konfigurasi build | Tersedia | `.replit` menjalankan `gradle assembleDebug` dan Java/Gradle tersedia. |
-| Build APK | Gagal di environment ini | Build berhenti sebelum kompilasi karena `ANDROID_HOME`/`ANDROID_SDK_ROOT` tidak ada dan Android SDK platform 35 tidak tersedia. |
-| UI/menu | Terimplementasi, belum diuji runtime | Kode memiliki login Admin/Petugas, dashboard monitoring, form data pelanggan, tahap PLN Mobile, Perangkat, Sesi Remote, dan Pengaturan, tetapi belum ada APK/emulator untuk membuktikan alurnya berjalan. |
-| Login produksi | API/client tersedia, belum diuji di VPS | JWT email/password, refresh token, dan role sudah dibuat; akun Admin membutuhkan invite code dan database aktif. |
-| Form data pelanggan | UI, validasi, API, dan list Admin tersedia | Petugas mengirim task tervalidasi ke backend; status dan alur PLN Mobile tetap perlu diuji runtime. |
-| Alur Admin–Petugas | Request/approval tersedia, media belum ada | Request session sudah melalui REST/WebSocket; layar video dan kontrol gesture belum melewati WebRTC. |
-| Tahap PLN Mobile | Layar panduan tersedia | Aplikasi belum membuka, membaca, atau memverifikasi status aplikasi PLN Mobile; penyelesaian masih manual. |
-| Device registration | Backend/client tersedia, belum dideploy | APK mendaftarkan device memakai access token dan heartbeat; endpoint VPS belum aktif. |
-| Screen capture lokal | Terimplementasi, belum diuji perangkat | MediaProjection dan foreground service sudah dibuat; belum ada pengiriman frame dan belum diverifikasi di perangkat fisik. |
-| Remote control | Belum siap | Accessibility Service tersedia, tetapi belum menerima command dari peer. |
-| Signaling | Backend/client tersedia, belum diuji antar-device | Server merelay offer/answer/ICE untuk session yang disetujui; deployment dan uji dua device belum dilakukan. |
-| WebRTC/video | Belum tersedia | Frame belum di-encode atau dikirim. |
-| Audio | Belum tersedia | Toggle ditampilkan nonaktif agar tidak mengklaim fitur yang belum ada. |
-| TLS/domain | Belum siap | Endpoint yang diberikan mengembalikan 502 saat pengecekan. |
-| Release signing | Belum tersedia | Belum ada keystore dan pipeline AAB/release. |
-| QA launch | Belum siap | Belum ada unit/instrumented test, APK yang berhasil dibuat di environment ini, atau uji perangkat fisik. |
+Tidak ada jalur network yang memanggil fungsi tap tersebut.
 
-### Alur yang sudah ditulis di kode, tetapi belum terverifikasi runtime
+## 4. Backend yang benar-benar tersedia
 
-Kode dimaksudkan untuk mendukung alur berikut setelah APK berhasil dibuat dan
-dijalankan pada emulator/perangkat:
+### Konfigurasi yang wajib
 
-1. Masuk atau daftar menggunakan email valid dan password minimal 8 karakter
-   melalui backend JWT, lalu memilih role `Admin` atau `Petugas`. Tombol akun
-   contoh hanya mengisi field; tidak melewati autentikasi server.
-2. Sebagai Admin, memasukkan ID device Petugas pada dashboard Monitoring dan
-   menekan `Hubungkan & Pantau`.
-3. Sebagai Petugas, melihat ID device lokal dan membagikannya kepada Admin.
-4. Sebagai Petugas, membuka formulir dan mengisi nama pelanggan, IDPEL, alamat,
-   desa/kelurahan, kecamatan, kabupaten/kota, dan provinsi.
-5. Menggunakan `Demo ID` untuk mengisi IDPEL contoh, memilih provinsi dari
-   dropdown, lalu menekan `Simpan & Lanjut`.
-6. Melihat ringkasan data pada tahap PLN Mobile dan meminta izin MediaProjection
-   untuk berbagi layar.
-7. Membuka setiap menu bawah sesuai role: Admin memiliki `Monitoring`,
-   `Perangkat`, dan `Pengaturan`; Petugas memiliki `Tugas` dan `Pengaturan`.
-8. Mendaftarkan device 9 digit ke backend, mengirim heartbeat, mencegah duplikat
-   lokal, dan menghapus perangkat tersimpan.
-9. Menyalakan/mematikan foreground capture, mengelola Accessibility Service,
-   mengaktifkan/mematikan notifikasi sesi, mengakhiri sesi, dan logout.
+Backend memvalidasi environment berikut saat proses dimulai:
 
-Daftar di atas adalah kemampuan yang terlihat dari source code, bukan hasil
-pengujian berhasil pada perangkat. Pengujian di atas juga belum berarti alur
-Admin–Petugas atau remote support antarperangkat sudah bekerja. Tombol
-`Hubungkan & Pantau` sekarang membuat request session ke backend dan petugas
-melihatnya lewat WebSocket untuk disetujui atau ditolak. Data pelanggan dikirim
-ke backend dan dapat dimuat Admin. Koneksi video dan kontrol tetap belum aktif
-karena pipeline WebRTC/data channel belum diimplementasikan.
+- `DATABASE_URL` — wajib.
+- `JWT_SECRET` — wajib dan minimal 32 karakter.
+- `PORT` — default `3000`.
+- `HOST` — default `127.0.0.1`.
+- `JWT_ISSUER` — default `linkdroid-api`.
+- `ACCESS_TOKEN_TTL` — default `15m`.
+- `REFRESH_TOKEN_DAYS` — default `30`.
+- `CORS_ORIGIN` — default `*`.
+- `ADMIN_INVITE_CODE` — opsional, tetapi dibutuhkan untuk mendaftarkan role
+  `ADMIN`.
+- `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` — opsional; tanpa ketiganya
+  endpoint TURN mengembalikan `503`.
 
-### Bukti verifikasi environment terakhir
+Nilai rahasia tidak boleh ditulis ke repository atau dokumen ini.
 
-- `gradle help` berhasil.
-- `gradle assembleDebug` gagal sebelum kompilasi dengan pesan `SDK location not
-  found`.
-- `ANDROID_HOME` dan `ANDROID_SDK_ROOT` tidak ter-set; `sdkmanager` tidak
-  tersedia.
-- Tidak ada emulator atau perangkat Android yang terhubung untuk pengujian UI,
-  permission, service, dan menu.
-- `https://103-245-38-142.sslip.io/` merespons HTTP `502`.
-- `http://103-245-38-142.sslip.io/` merespons HTTP `301` menuju HTTPS.
+### Endpoint yang tersedia
 
-### Kontrak registrasi device yang dipakai APK
+Endpoint publik:
 
-Client APK sekarang mengirim dengan header `Authorization: Bearer <accessToken>`:
+- `GET /health` — menjalankan `SELECT 1` ke database dan mengembalikan status
+  database.
+- `POST /api/v1/auth/register`.
+- `POST /api/v1/auth/login`.
+- `POST /api/v1/auth/refresh`.
 
-`POST https://103-245-38-142.sslip.io/api/v1/devices/register`
+Endpoint dengan Bearer access token:
 
-Dengan JSON:
+- `POST /api/v1/auth/logout` — mencabut semua refresh token aktif milik user.
+- `GET /api/v1/me`.
+- `POST /api/v1/devices/register`.
+- `GET /api/v1/devices`.
+- `DELETE /api/v1/devices/:deviceId`.
+- `POST /api/v1/devices/:deviceId/heartbeat`.
+- `POST /api/v1/sessions` — khusus `ADMIN`.
+- `GET /api/v1/sessions`.
+- `POST /api/v1/sessions/:id/approve` — hanya receiver.
+- `POST /api/v1/sessions/:id/reject` — hanya receiver.
+- `POST /api/v1/sessions/:id/end` — salah satu participant.
+- `POST /api/v1/tasks` — khusus `WORKER`.
+- `GET /api/v1/tasks`.
+- `PATCH /api/v1/tasks/:id/status`.
+- `GET /api/v1/turn/credentials`.
 
-```json
-{
-  "deviceId": "ID lokal 9 digit",
-  "deviceName": "manufacturer dan model Android",
-  "androidVersion": "versi Android",
-  "appVersion": "versi aplikasi"
-}
+Backend juga memasang Helmet, CORS, body size limit `128kb`, rate limit umum,
+dan rate limit auth. Error validasi Zod dikembalikan sebagai `400`.
+
+### Database
+
+Schema Prisma berisi model:
+
+- `User`;
+- `Device`;
+- `RefreshToken`;
+- `RemoteSession`;
+- `CustomerTask`;
+- `AuditLog`.
+
+Status session yang didefinisikan adalah `REQUESTED`, `APPROVED`, `ACTIVE`,
+`REJECTED`, `ENDED`, dan `EXPIRED`. Source endpoint approval mengubah status
+menjadi `APPROVED`, sedangkan end mengubahnya menjadi `ENDED`. Tidak ada
+scheduler expiry atau endpoint yang mengubah session menjadi `ACTIVE` pada
+source saat ini.
+
+Audit log ditulis untuk event register user, register/revoke device, request/
+approve/reject/end session, create task, dan perubahan status task. Belum ada
+fitur UI atau endpoint khusus untuk menampilkan audit log.
+
+### WebSocket signaling
+
+Endpoint upgrade `/ws` memerlukan query parameter:
+
+- `access_token`;
+- `device_id`.
+
+Server:
+
+- memverifikasi access token;
+- memastikan device terdaftar pada user tersebut dan belum dicabut;
+- merelay `offer`, `answer`, dan `ice-candidate`;
+- hanya mengizinkan device yang menjadi controller atau receiver session;
+- hanya mengizinkan session berstatus `APPROVED` atau `ACTIVE`.
+
+Pesan yang didefinisikan juga memuat `session.ping`, tetapi implementasi relay
+utama hanya menggunakan payload signaling yang tervalidasi sebagai
+`offer`, `answer`, atau `ice-candidate`.
+
+## 5. Integrasi Android dengan backend
+
+`BackendApiClient` yang dipakai alur utama Android sudah memanggil:
+
+- register/login;
+- register device;
+- heartbeat setiap 30 detik selama token ada;
+- membuat session;
+- approve/reject/end session;
+- membuat task pelanggan;
+- mengubah status task;
+- mengambil daftar task untuk Admin.
+
+`SignalingClient` membuat koneksi WebSocket dan menangani:
+
+- koneksi berhasil;
+- session request;
+- session approved/rejected/ended;
+- error signaling.
+
+Client tersebut memiliki method `sendSignal`, tetapi alur `MainActivity` saat ini
+tidak membuat object WebRTC dan tidak memanggil method itu untuk mengirim
+offer, answer, atau ICE candidate.
+
+Ada file `DeviceRegistrationClient.kt` yang mengirim payload lama tanpa header
+Bearer dan tidak dipakai oleh alur utama `MainActivity`. Kontrak yang dipakai
+alur utama adalah `BackendApiClient`.
+
+## 6. Gap fungsional yang nyata
+
+### A. Remote support end-to-end belum ada
+
+Yang sudah ada hanya:
+
+1. Admin membuat request session.
+2. Backend menyimpan request.
+3. WebSocket memberitahukan request kepada Petugas.
+4. Petugas approve atau reject.
+5. Backend mengirim event status kepada participant.
+6. Android menampilkan state dan dapat menjalankan screen capture lokal.
+
+Yang belum ada:
+
+- `PeerConnection`;
+- offer/answer yang dibuat Android;
+- ICE gathering dan penerapan candidate;
+- pengambilan credential TURN dari Android;
+- pengiriman frame layar;
+- video renderer pada controller;
+- data channel;
+- command tap/swipe/input;
+- acknowledgment command;
+- metrik latency dan kualitas koneksi.
+
+Tombol atau pesan “menunggu koneksi media” tidak sama dengan koneksi media
+yang sudah aktif.
+
+### B. Kontrol remote belum terhubung
+
+Accessibility Service baru memiliki helper `tap`. Belum ada:
+
+- schema command remote;
+- validasi koordinat;
+- pembatasan command terhadap session yang approved;
+- antrian dan timeout command;
+- hasil berhasil/gagal dari perangkat receiver;
+- swipe, text input, back, home, atau command lain;
+- pengiriman command melalui WebRTC data channel atau transport lain.
+
+### C. Auth client belum lengkap
+
+Backend memiliki endpoint refresh dan rotasi refresh token, tetapi Android:
+
+- menyimpan access dan refresh token di preferences;
+- tidak mengimplementasikan refresh otomatis saat access token kedaluwarsa;
+- tidak memanggil endpoint logout saat pengguna menekan logout;
+- hanya menghapus token lokal saat logout.
+
+Backend juga belum memiliki reset password, verifikasi email, atau manajemen
+akun.
+
+### D. Lifecycle sesi belum tahan terhadap process death
+
+State utama session, screen sharing, task yang baru dibuat, dan pesan UI berada
+di state Activity/Compose. Belum ada repository/session store yang memulihkan
+state secara penuh setelah process death, recreation, atau service berjalan
+terpisah.
+
+Backend memiliki status `EXPIRED`, tetapi source belum menyediakan mekanisme
+expiry otomatis. Reconnect WebSocket juga belum memiliki strategi retry/backoff
+di client.
+
+### E. Notifikasi masih dasar
+
+Notifikasi permission diminta pada Android 13+. Aplikasi dapat membuat
+notifikasi lokal untuk status menunggu sesi dan foreground notification untuk
+screen capture.
+
+Belum ada:
+
+- notifikasi push ketika aplikasi tidak aktif;
+- deep link menuju session tertentu;
+- notifikasi lifecycle lengkap untuk request, approve, reject, disconnect, dan
+  expiry;
+- jaminan sinkronisasi notifikasi lintas process.
+
+### F. Tahap PLN Mobile masih manual
+
+Aplikasi hanya menampilkan panduan dan ringkasan data. Source tidak:
+
+- membuka aplikasi PLN Mobile;
+- membaca UI PLN Mobile;
+- memverifikasi hasil proses PLN Mobile;
+- menyimpan bukti hasil proses;
+- mengubah status berdasarkan observasi aplikasi PLN Mobile secara otomatis.
+
+## 7. Gap keamanan dan privasi
+
+Fondasi yang sudah ada:
+
+- password di-hash dengan bcrypt;
+- access token JWT memiliki expiry;
+- refresh token disimpan sebagai hash dan dirotasi ketika digunakan;
+- role check pada endpoint tertentu;
+- ownership check untuk device dan session;
+- persetujuan receiver diperlukan sebelum signaling session diterima;
+- device ID sendiri bukan kredensial;
+- rate limit auth dan endpoint umum;
+- Helmet aktif;
+- screen capture membutuhkan persetujuan MediaProjection;
+- Accessibility Service harus diaktifkan melalui pengaturan Android.
+
+Yang masih perlu diselesaikan atau diverifikasi:
+
+- penyimpanan token Android yang lebih aman daripada preferences biasa;
+- refresh token otomatis dan penanganan token kedaluwarsa;
+- validasi deployment HTTPS/WSS yang benar;
+- konfigurasi CORS production yang tidak memakai wildcard bila tidak diperlukan;
+- pembatasan dan rotasi secret;
+- proteksi replay dan token/session yang lebih spesifik;
+- policy retensi dan penghapusan data pelanggan;
+- privacy policy dan consent screen capture/accessibility;
+- mekanisme pelaporan penyalahgunaan;
+- audit terhadap metadata customer task yang mengandung data pribadi;
+- hardening, backup, monitoring, dan incident response deployment.
+
+## 8. Gap build dan verifikasi
+
+Project Android menggunakan:
+
+- compile/target SDK 35;
+- min SDK 26;
+- Java/Kotlin target 17;
+- Android Gradle Plugin;
+- Jetpack Compose Material 3.
+
+Build yang didokumentasikan:
+
+```bash
+cd artifacts/linkdroid-android/native-kotlin
+gradle assembleDebug
 ```
 
-Respons HTTP `2xx` dianggap berhasil dan statusnya ditampilkan sebagai
-`Device sudah terdaftar di server`. Respons non-`2xx`, termasuk `502`, dianggap
-gagal dan ditampilkan di menu Pengaturan sehingga pengguna dapat mencoba
-pendaftaran ulang. Endpoint tersedia di source backend, tetapi belum
-terverifikasi pada VPS.
-
-## Prioritas kritis
-
-### 1. Signaling backend sudah ditulis, tetapi belum operasional
-
-Backend dan client sudah menyediakan kanal untuk:
-
-- Mendaftarkan device ID ke server.
-- Menemukan perangkat tujuan.
-- Mengirim permintaan sesi.
-- Menerima atau menolak permintaan sesi.
-- Menyinkronkan status sesi.
-- Menangani reconnect dan sesi yang kedaluwarsa.
-
-Yang belum terverifikasi adalah deployment VPS, database aktif, reconnect,
-expiry scheduler, dan alur pada dua device fisik.
-
-### 2. Transport WebRTC belum tersedia
-
-Belum ada implementasi WebRTC atau transport real-time lain untuk mengirim:
-
-- Frame layar dari `MediaProjection`.
-- Audio sesi.
-- Data channel untuk perintah remote.
-- Status koneksi, latency, dan kualitas jaringan.
-
-`ScreenCaptureService` saat ini membuat VirtualDisplay dan membaca frame agar
-buffer tidak penuh, tetapi frame tersebut belum dikodekan dan dikirim ke
-perangkat lain.
-
-### 3. Alur penerima sesi sudah tersedia untuk approval
-
-Device penerima sekarang dapat:
-
-- Melihat permintaan sesi masuk.
-- Memverifikasi identitas pengendali.
-- Menyetujui atau menolak akses melalui tombol UI.
-- Melihat indikator monitoring aktif setelah approval.
-
-Yang masih belum ada: penghentian sesi penerima melalui tombol khusus dan
-indikator media WebRTC yang benar-benar tersambung.
-
-Persetujuan pengguna harus menjadi syarat sebelum screen sharing atau kontrol
-remote aktif.
-
-### 4. Kontrol remote belum memiliki jalur perintah
-
-`RemoteAccessibilityService` sudah memiliki fungsi gesture tap, tetapi belum ada
-komponen yang menerima perintah tap, swipe, atau input lain dari koneksi remote.
-Belum tersedia:
-
-- Validasi koordinat dan tipe perintah.
-- Antrian perintah.
-- Timeout perintah.
-- Konfirmasi keberhasilan atau kegagalan gesture.
-- Pembatasan perintah hanya untuk sesi yang telah disetujui.
-
-## Fitur aplikasi yang masih terbatas
-
-### 5. Login server sudah tersedia, tetapi belum siap produksi
-
-Login APK sekarang memanggil API JWT dan menyimpan access/refresh token untuk
-sesi aktif. Sistem produksi masih membutuhkan:
-
-- Penggantian access token otomatis ketika kedaluwarsa.
-- Logout dari semua perangkat.
-- Reset password.
-- Verifikasi email.
-- Manajemen akun pengguna.
-
-Sistem produksi membutuhkan provider autentikasi atau backend yang aman.
-
-### 6. Device ID sudah memiliki pairing server, tetapi belum terdeploy
-
-ID perangkat utama dibuat lokal sekali lalu dipairing melalui endpoint
-terautentikasi. Backend menyimpan device, heartbeat, dan pencabutan device.
-Fitur ini belum dapat dinyatakan berjalan sebelum migration diterapkan di
-PostgreSQL VPS dan backend listen di port 3000.
-
-### 7. Data perangkat belum menggunakan penyimpanan yang kuat
-
-Daftar perangkat disimpan dalam `SharedPreferences` menggunakan string yang
-dipisahkan karakter tertentu. Pendekatan ini belum ideal untuk:
-
-- Banyak perangkat.
-- Perubahan struktur data.
-- Sinkronisasi antarperangkat.
-- Migrasi data.
-- Enkripsi data sensitif.
-
-Untuk data yang lebih kompleks, gunakan database lokal seperti Room dan
-sinkronisasi terautentikasi dengan backend.
-
-### 8. Audio belum diimplementasikan
-
-Toggle `Audio sesi` sengaja dinonaktifkan dan diberi keterangan belum tersedia.
-Fitur ini baru dapat berfungsi setelah permission audio, pipeline capture,
-encoding, transport, dan playback tersedia.
-
-### 9. Notifikasi belum mencakup seluruh lifecycle sesi
-
-Notifikasi dasar untuk sesi lokal sudah tersedia, tetapi belum ada:
-
-- Notifikasi permintaan sesi masuk.
-- Notifikasi sesi disetujui atau ditolak.
-- Notifikasi koneksi terputus.
-- Deep link untuk membuka sesi tertentu.
-- Sinkronisasi notifikasi saat aplikasi berada di background.
-
-## Keamanan dan privasi
-
-### 10. Otorisasi sesi tersedia di backend, belum diuji produksi
-
-JWT access token, refresh token, role check, device ownership, participant check,
-dan persetujuan eksplisit penerima sudah diterapkan di backend. Device ID saja
-tidak menjadi kredensial akses.
-
-Sistem produksi masih membutuhkan:
-
-- Token sesi berumur pendek.
-- Persetujuan eksplisit penerima.
-- Validasi identitas kedua pihak.
-- Pembatasan satu sesi aktif jika diperlukan.
-- Pencabutan akses.
-- Proteksi replay attack.
-
-### 11. Enkripsi media end-to-end belum diverifikasi
-
-API dan WebSocket dirancang untuk HTTPS/WSS melalui domain TLS, tetapi pipeline
-media WebRTC belum ada sehingga enkripsi media dan validasi identitas peer belum
-dapat diuji.
-
-### 12. Audit log backend tersedia, riwayat operasional belum lengkap
-
-Backend sudah mencatat event akun, device, task, dan lifecycle session. Belum ada
-pencatatan:
-
-- Siapa yang memulai sesi.
-- Perangkat mana yang diakses.
-- Waktu persetujuan dan penghentian.
-- Permission yang digunakan.
-- Perintah remote yang dijalankan.
-- Alasan kegagalan sesi.
-
-Audit log diperlukan untuk investigasi keamanan dan dukungan pengguna.
-
-### 13. Pengelolaan permission belum lengkap
-
-Permission dasar sudah diminta, tetapi belum semua kondisi ditangani dengan
-jelas, seperti:
-
-- Pengguna menolak notifikasi secara permanen.
-- Pengguna mencabut Accessibility Service saat sesi berlangsung.
-- Pengguna mencabut izin screen capture.
-- Aplikasi masuk background atau dihentikan sistem.
-- Perangkat menjalankan pembatasan baterai.
-- Perubahan orientasi atau ukuran layar.
-
-Setiap kondisi perlu menghasilkan status dan pesan yang jelas, serta
-membersihkan sesi dengan aman.
-
-## Stabilitas dan kualitas
-
-### 14. Belum ada test otomatis yang memadai
-
-Belum tersedia coverage untuk:
-
-- Validasi dan format device ID.
-- Penyimpanan dan pemuatan daftar perangkat.
-- Penolakan device duplikat.
-- Lifecycle `RemoteSessionCoordinator`.
-- State login, logout, dan sesi.
-- Penanganan permission.
-- Lifecycle `ScreenCaptureService`.
-- Kontrak signaling dan perintah gesture.
-
-Tambahkan unit test Kotlin, instrumented test Android, dan pengujian manual
-pada emulator serta perangkat fisik.
-
-### 15. Error handling jaringan sebagian tersedia
-
-Client API menampilkan error HTTP/auth dan signaling menampilkan error koneksi.
-Yang masih belum ditangani lengkap:
-
-- Tidak ada koneksi internet.
-- Server signaling tidak tersedia.
-- Peer timeout.
-- ICE/WebRTC failure.
-- Reconnect.
-- Sesi yang ditolak.
-- Perangkat tujuan offline.
-- Sesi yang sudah kedaluwarsa.
-
-Semua kegagalan harus terlihat oleh pengguna dan tidak meninggalkan service
-atau state sesi yang menggantung.
-
-### 16. Belum ada lifecycle state lintas proses
-
-State sesi dan status screen sharing terutama berada di state Activity. Jika
-Activity dibuat ulang, proses dimatikan sistem, atau service berjalan terpisah,
-state UI dapat tidak sepenuhnya mencerminkan state service.
-
-Diperlukan state repository atau komunikasi service-to-Activity yang tahan
-terhadap recreation dan process lifecycle.
-
-### 17. Belum ada pipeline CI/CD Android
-
-Belum ada pemeriksaan otomatis untuk:
-
-- Build debug dan release.
-- Kotlin lint atau Android lint.
-- Unit test.
-- Signing APK/AAB.
-- Verifikasi dependency.
-- Penyimpanan artifact build.
-
-Build lokal saat ini juga membutuhkan Android SDK platform 35 dan build-tools
-yang sesuai di environment.
-
-## Operasional dan kesiapan produksi
-
-### 18. Backend sudah dibuat, tetapi belum operasional di VPS
-
-Lapisan VPS dasar sudah tersedia, source backend dan migration sudah ada, tetapi
-deployment belum dilakukan. Sistem produksi masih membutuhkan:
-
-- Proses backend yang listen di `127.0.0.1:3000`; Nginx dan TLS sudah
-  meneruskan traffic ke lokasi tersebut.
-- Database dan user PostgreSQL khusus LinkDroid; service PostgreSQL sudah
-  berjalan di localhost.
-- Penerapan migration dan handler API/WebSocket/health check yang sudah tersedia.
-- Penyimpanan konfigurasi.
-- Rate limiting.
-- Monitoring dan logging.
-- Backup dan pemulihan.
-- Mekanisme upgrade schema.
-
-`502 Bad Gateway` saat ini disebabkan port 3000 kosong, bukan karena konfigurasi
-Nginx atau sertifikat TLS belum tersedia.
-
-### 19. Konfigurasi endpoint dan kontrak sudah terhubung di source
-
-Endpoint domain produksi dicatat sebagai `BuildConfig`, client API Android
-memakai kontrak REST JWT, dan client WebSocket memakai kontrak signaling.
-Backend melayani kontrak tersebut di source, tetapi belum tersedia pada domain
-karena belum dideploy. Konfigurasi WebRTC yang memakai coturn, logging produksi,
-dan mode development/production tetap perlu diuji. Nilai rahasia tidak boleh
-ditulis langsung ke source code atau di-commit ke repository.
-
-### 20. Belum ada kebijakan privasi dan persetujuan pengguna
-
-Karena aplikasi dapat membagikan layar dan menjalankan kontrol sentuhan,
-dibutuhkan:
-
-- Penjelasan penggunaan screen capture.
-- Penjelasan Accessibility Service.
-- Kebijakan privasi.
-- Persetujuan akses remote.
-- Informasi durasi dan penghentian sesi.
-- Mekanisme pelaporan penyalahgunaan.
-
-### 21. Belum ada dokumentasi penggunaan end-to-end
-
-Dokumentasi yang belum tersedia meliputi:
-
-- Cara memasang APK.
-- Cara mendaftarkan perangkat.
-- Cara mengaktifkan Accessibility Service.
-- Cara memulai sesi sebagai pengendali.
-- Cara menyetujui sesi sebagai penerima.
-- Cara menghentikan sesi darurat.
-- Troubleshooting permission dan jaringan.
-
-## Urutan pekerjaan yang disarankan
-
-1. Deploy backend, terapkan migration, dan aktifkan health check domain.
-2. Uji login, pairing device, heartbeat, dan auth refresh.
-3. Uji alur permintaan, persetujuan, penolakan, dan penghentian sesi pada dua
-   perangkat.
-4. Tambahkan WebRTC untuk video layar dan data channel.
-5. Hubungkan perintah remote ke Accessibility Service dengan validasi ketat.
-6. Tambahkan audio jika memang diperlukan oleh produk.
-7. Perkuat penyimpanan token, lifecycle, audit log, dan error handling.
-8. Tambahkan unit test, instrumented test, lint, dan pipeline build.
-9. Lengkapi kebijakan privasi serta dokumentasi penggunaan.
-10. Uji pada beberapa versi Android dan perangkat fisik sebelum rilis.
-
-## Checklist sebelum menyatakan siap launch
-
-- [ ] Backend auth dan signaling aktif di domain TLS, bukan hanya reverse proxy.
-- [ ] Health check domain mengembalikan status sukses dan sertifikat valid.
-- [ ] Kontrak API/WebSocket disepakati dan diimplementasikan di Android.
-- [ ] Login, refresh token, pairing device, dan pencabutan akses diuji.
-- [ ] Alur request, approve, reject, end session diuji pada dua perangkat.
-- [ ] WebRTC video/data channel tersambung melalui STUN/TURN yang tervalidasi.
-- [ ] Command remote divalidasi, dibatasi sesi yang disetujui, dan memiliki
-  timeout/error response.
-- [ ] MediaProjection, Accessibility, notifikasi, background, dan battery
-  restriction diuji pada versi Android target.
-- [ ] Unit test, instrumented test, lint, dan build release berhasil.
-- [ ] Keystore/AAB, privacy policy, consent, abuse reporting, monitoring,
+Output yang diharapkan:
+
+```text
+artifacts/linkdroid-android/native-kotlin/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Repository ini tidak menyimpan Android SDK atau `local.properties`. Karena itu,
+build hanya dapat dilakukan pada environment yang memiliki Android SDK platform
+35 dan build-tools yang sesuai.
+
+Belum ada bukti di repository ini untuk:
+
+- build APK berhasil pada environment saat ini;
+- emulator atau perangkat fisik terhubung;
+- unit test Kotlin;
+- instrumented test;
+- Android lint;
+- backend integration test;
+- pengujian dua akun dan dua device;
+- pengujian permission/background/battery restriction;
+- pengujian koneksi WebSocket melalui proxy;
+- pengujian TURN atau WebRTC;
+- release signing/AAB.
+
+Perintah backend yang tersedia di `package.json`:
+
+```bash
+npm run backend:prisma:generate
+npm run backend:prisma:migrate
+npm run backend:build
+npm run backend:dev
+npm run backend:start
+```
+
+Backend membutuhkan `backend/.env` yang berisi `DATABASE_URL` dan `JWT_SECRET`
+minimal, serta database PostgreSQL yang sudah dibuat. Tidak ada nilai production
+yang boleh diasumsikan dari source.
+
+## 9. Status deployment
+
+Repository mendefinisikan base URL Android sebagai:
+
+```text
+https://103-245-38-142.sslip.io
+```
+
+Repository ini **tidak membuktikan** bahwa domain tersebut sedang:
+
+- mengarah ke server yang benar;
+- memiliki Nginx atau TLS yang aktif;
+- meneruskan traffic ke port `3000`;
+- menjalankan backend;
+- memiliki database LinkDroid;
+- memiliki TURN credential yang valid.
+
+Dengan demikian, status deployment production harus dianggap **belum
+terverifikasi**, bukan dianggap aktif atau dianggap pasti `502`, kecuali ada
+hasil pengecekan deployment terbaru yang dicatat terpisah.
+
+Backend secara default listen pada `127.0.0.1:3000`. Agar dapat diakses dari
+domain, dibutuhkan reverse proxy dan proses backend yang benar-benar berjalan
+dengan environment serta migration yang sesuai. Source menyediakan
+`backend/ecosystem.config.cjs` untuk rencana PM2, tetapi file itu sendiri bukan
+bukti bahwa PM2 sudah menjalankan proses.
+
+## 10. Prioritas pekerjaan berikutnya
+
+Urutan yang paling langsung berdasarkan gap saat ini:
+
+1. Sediakan Android SDK platform 35 dan buktikan `assembleDebug`.
+2. Sediakan PostgreSQL dan environment backend tanpa memasukkan secret ke Git.
+3. Jalankan migration, backend, dan health check secara terkontrol.
+4. Uji register/login/refresh/logout, pairing, heartbeat, task, dan session
+   dengan dua akun.
+5. Tambahkan integrasi WebRTC Android: `PeerConnection`, offer/answer, ICE,
+   TURN, video frame, dan lifecycle connection.
+6. Tambahkan data channel serta command remote yang tervalidasi dan dibatasi
+   pada session approved.
+7. Perbaiki refresh token, reconnect, session expiry, dan lifecycle lintas
+   Activity/service.
+8. Tambahkan test unit, integration, instrumented, lint, dan uji perangkat
+   fisik.
+9. Lengkapi privacy/consent, logging, monitoring, backup, release signing, dan
+   dokumentasi operasional.
+
+## 11. Checklist launch
+
+- [ ] Android debug APK berhasil dibuild.
+- [ ] Backend dapat start dengan environment valid.
+- [ ] PostgreSQL migration berhasil diterapkan pada database target.
+- [ ] `/health` mengembalikan database `up`.
+- [ ] Register/login/refresh/logout diuji.
+- [ ] Device registration, heartbeat, list, dan revoke diuji.
+- [ ] Request, approve, reject, dan end session diuji dengan dua akun.
+- [ ] WebSocket authentication dan reconnect diuji.
+- [ ] WebRTC video benar-benar mengirim frame ke controller.
+- [ ] TURN/STUN diuji pada jaringan yang relevan.
+- [ ] Data channel command remote divalidasi dan memiliki timeout/error response.
+- [ ] Accessibility dan MediaProjection diuji pada versi Android target.
+- [ ] Background, process death, orientation, dan battery restriction diuji.
+- [ ] Customer task dan status lifecycle diuji.
+- [ ] Unit test, integration test, instrumented test, lint, dan release build
+  berhasil.
+- [ ] Token storage, privacy policy, consent, abuse reporting, monitoring,
   backup, dan rollback operasional tersedia.
 
 ## Kesimpulan
 
-Repository ini sudah memiliki fondasi UI/service Android native Kotlin, backend
-JWT/Prisma, API task/session, dan signaling WebSocket. Auth, pairing device,
-approval session, heartbeat, dan penyimpanan task sudah terhubung di source.
-Aplikasi belum memenuhi kebutuhan remote-support produksi karena backend belum
-dideploy ke VPS, WebRTC video/data channel dan command Accessibility belum ada,
-build APK belum dapat diverifikasi tanpa Android SDK, serta belum ada uji dua
-perangkat fisik. Aplikasi belum boleh dipasarkan sebagai remote-support aktif
-sampai checklist di atas selesai.
+LinkDroid saat ini adalah fondasi aplikasi Android native dan backend API yang
+sudah memiliki auth, device pairing, heartbeat, customer task, request/
+approval session, audit log, serta relay WebSocket. Screen capture lokal dan
+Accessibility Service juga sudah dideklarasikan, tetapi keduanya belum
+terhubung ke transport remote.
+
+Sistem ini belum dapat disebut remote-support end-to-end karena belum memiliki
+WebRTC/video, data channel, command remote, refresh flow client yang lengkap,
+expiry/reconnect yang lengkap, deployment yang terverifikasi, dan pengujian
+dua perangkat. Dokumentasi atau UI yang menyatakan “menunggu koneksi” tidak
+boleh dianggap sebagai bukti bahwa koneksi media sudah aktif.
