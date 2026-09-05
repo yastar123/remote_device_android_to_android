@@ -98,7 +98,7 @@ class WebRtcSessionManager(
                             onSuccess = {
                                 sendSignal(
                                     "offer",
-                                    JSONObject().put("sdp", description.description),
+                                    JSONObject().put("sdp", description?.description.orEmpty()),
                                 )
                             },
                             onFailure = { onStateChanged("Local SDP gagal: $it") },
@@ -137,7 +137,7 @@ class WebRtcSessionManager(
                                                 onSuccess = {
                                                     sendSignal(
                                                         "answer",
-                                                        JSONObject().put("sdp", answer.description),
+                                                        JSONObject().put("sdp", answer?.description.orEmpty()),
                                                     )
                                                 },
                                                 onFailure = { onStateChanged("Local answer gagal: $it") },
@@ -401,25 +401,23 @@ class WebRtcSessionManager(
     }
 
     private fun sdpObserver(
-        onSuccess: () -> Unit,
+        onSuccess: (SessionDescription?) -> Unit,
         onFailure: (String) -> Unit,
     ) = object : SdpObserver {
-        override fun onCreateSuccess(description: SessionDescription) = onSuccess()
-        override fun onSetSuccess() = onSuccess()
+        override fun onCreateSuccess(description: SessionDescription) = onSuccess(description)
+        override fun onSetSuccess() = onSuccess(null)
         override fun onCreateFailure(error: String) = onFailure(error)
         override fun onSetFailure(error: String) = onFailure(error)
     }
 
     private fun buildIceServers(backend: List<BackendIceServer>): List<PeerConnection.IceServer> =
-        (backend + BackendIceServer(listOf("stun:stun.l.google.com:19302")))
+        (backend + BackendIceServer(listOf("stun:stun.l.google.com:19302"), null, null))
             .flatMap { server ->
                 server.urls.map { url ->
-                    PeerConnection.IceServer.builder(url)
-                        .apply {
-                            if (!server.username.isNullOrBlank()) setUsername(server.username)
-                            if (!server.credential.isNullOrBlank()) setPassword(server.credential)
-                        }
-                        .createIceServer()
+                    PeerConnection.IceServer.builder(url).apply {
+                        if (!server.username.isNullOrBlank()) setUsername(server.username)
+                        if (!server.credential.isNullOrBlank()) setPassword(server.credential)
+                    }.createIceServer()
                 }
             }
 }

@@ -544,11 +544,29 @@ class MainActivity : ComponentActivity() {
                                     adminInviteCode = adminInviteCode,
                                 )
                             } else {
-                                BackendApiClient.login(
-                                    baseUrl = BuildConfig.BACKEND_BASE_URL,
-                                    email = enteredEmail,
-                                    password = password,
-                                )
+                                try {
+                                    BackendApiClient.login(
+                                        baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                        email = enteredEmail,
+                                        password = password,
+                                    )
+                                } catch (error: BackendHttpException) {
+                                    if (
+                                        error.statusCode == 401 &&
+                                        enteredEmail.equals("demo@linkdroid.app", ignoreCase = true) &&
+                                        password == "linkdroid"
+                                    ) {
+                                        BackendApiClient.register(
+                                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                            email = "demo@linkdroid.app",
+                                            password = "linkdroid",
+                                            role = UserRole.WORKER,
+                                            adminInviteCode = null,
+                                        )
+                                    } else {
+                                        throw error
+                                    }
+                                }
                             }
                         }.onSuccess { result ->
                             getPreferences(MODE_PRIVATE).edit()
@@ -1023,6 +1041,11 @@ private enum class AppScreen { LOGIN, HOME, CUSTOMER_FORM, PLN_MOBILE, DEVICES, 
 
 enum class UserRole { ADMIN, WORKER }
 
+private const val DEMO_ADMIN_EMAIL = "demo.admin@linkdroid.app"
+private const val DEMO_ADMIN_PASSWORD = "LinkDroidAdmin2026!"
+private const val DEMO_WORKER_EMAIL = "demo.worker@linkdroid.app"
+private const val DEMO_WORKER_PASSWORD = "LinkDroidWorker2026!"
+
 private data class Device(val id: String, val name: String, val platform: String, val online: Boolean)
 
 data class CustomerData(
@@ -1129,20 +1152,28 @@ private fun LoginScreen(
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
                     )
-                     Text("Masuk sebagai", fontWeight = FontWeight.Medium)
-                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                         OutlinedButton(
-                             onClick = { selectedRole = UserRole.ADMIN },
-                             modifier = Modifier.weight(1f),
-                         ) {
-                             Text(if (selectedRole == UserRole.ADMIN) "✓ Admin" else "Admin")
+                     if (isRegistering) {
+                         Text("Daftar sebagai", fontWeight = FontWeight.Medium)
+                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                             OutlinedButton(
+                                 onClick = { selectedRole = UserRole.ADMIN },
+                                 modifier = Modifier.weight(1f),
+                             ) {
+                                 Text(if (selectedRole == UserRole.ADMIN) "✓ Admin" else "Admin")
+                             }
+                             OutlinedButton(
+                                 onClick = { selectedRole = UserRole.WORKER },
+                                 modifier = Modifier.weight(1f),
+                             ) {
+                                 Text(if (selectedRole == UserRole.WORKER) "✓ Petugas" else "Petugas")
+                             }
                          }
-                         OutlinedButton(
-                             onClick = { selectedRole = UserRole.WORKER },
-                             modifier = Modifier.weight(1f),
-                         ) {
-                             Text(if (selectedRole == UserRole.WORKER) "✓ Petugas" else "Petugas")
-                         }
+                     } else {
+                         Text(
+                             "Role mengikuti akun yang terdaftar di server.",
+                             color = LinkDroidColors.muted,
+                             style = MaterialTheme.typography.bodySmall,
+                         )
                      }
                      if (isRegistering && selectedRole == UserRole.ADMIN) {
                          OutlinedTextField(
@@ -1172,15 +1203,28 @@ private fun LoginScreen(
                          enabled = !isLoading,
                         modifier = Modifier.fillMaxWidth(),
                      ) { Text(if (isLoading) "Menghubungkan..." else if (isRegistering) "Daftar" else "Masuk") }
-                    OutlinedButton(
-                        onClick = {
-                            email = "demo@linkdroid.app"
-                            password = "linkdroid"
-                             error = null
-                        },
-                         enabled = !isLoading,
-                        modifier = Modifier.fillMaxWidth(),
-                     ) { Text("Isi akun contoh") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                email = DEMO_ADMIN_EMAIL
+                                password = DEMO_ADMIN_PASSWORD
+                                isRegistering = false
+                                error = null
+                            },
+                            enabled = !isLoading,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Demo Admin") }
+                        OutlinedButton(
+                            onClick = {
+                                email = DEMO_WORKER_EMAIL
+                                password = DEMO_WORKER_PASSWORD
+                                isRegistering = false
+                                error = null
+                            },
+                            enabled = !isLoading,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Demo Petugas") }
+                    }
                      TextButton(
                          onClick = {
                              isRegistering = !isRegistering
@@ -1780,13 +1824,15 @@ private fun SessionScreen(
                     "Berbagi layar",
                     if (isScreenSharing) "MediaProjection aktif di perangkat ini" else "Belum dimulai",
                     isScreenSharing,
-                ) { enabled -> if (enabled) onShareScreen() else onStopSharing() }
+                    onCheckedChange = { enabled -> if (enabled) onShareScreen() else onStopSharing() },
+                )
                 SettingRow(
                     "Audio sesi",
                     "Belum tersedia sampai audio transport diaktifkan",
                     audioEnabled,
+                    onCheckedChange = { audioEnabled = it },
                     enabled = false,
-                ) { audioEnabled = it }
+                )
                 if (isController) {
                     HorizontalDivider()
                     Text("Kontrol aksesibilitas", fontWeight = FontWeight.Bold)

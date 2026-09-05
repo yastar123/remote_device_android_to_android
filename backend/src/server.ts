@@ -1,6 +1,10 @@
 import http from "node:http";
 import { URL } from "node:url";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, {
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -20,7 +24,11 @@ import {
   type AuthUser,
 } from "./auth.js";
 import { disconnectDatabase, prisma, writeAudit } from "./db.js";
-import { authenticateWebSocket, createWebSocketServer, SignalingHub } from "./ws.js";
+import {
+  authenticateWebSocket,
+  createWebSocketServer,
+  SignalingHub,
+} from "./ws.js";
 
 const app = express();
 app.set("trust proxy", "loopback");
@@ -46,11 +54,16 @@ const authLimiter = rateLimit({
   limit: 20,
   standardHeaders: "draft-8",
   legacyHeaders: false,
-  message: { error: "RATE_LIMITED", message: "Too many authentication attempts. Try again later." },
+  message: {
+    error: "RATE_LIMITED",
+    message: "Too many authentication attempts. Try again later.",
+  },
 });
 
 const deviceSchema = z.object({
-  deviceId: z.string().regex(/^\d{9}$/, "deviceId must contain exactly 9 digits"),
+  deviceId: z
+    .string()
+    .regex(/^\d{9}$/, "deviceId must contain exactly 9 digits"),
   deviceName: z.string().trim().min(1).max(120),
   androidVersion: z.string().trim().max(40).optional(),
   appVersion: z.string().trim().max(40).optional(),
@@ -74,7 +87,13 @@ const taskSchema = z.object({
 });
 
 const taskStatusSchema = z.object({
-  status: z.enum(["DATA_INPUT", "PLN_MOBILE", "IN_REVIEW", "COMPLETED", "NEEDS_CORRECTION"]),
+  status: z.enum([
+    "DATA_INPUT",
+    "PLN_MOBILE",
+    "IN_REVIEW",
+    "COMPLETED",
+    "NEEDS_CORRECTION",
+  ]),
 });
 
 const refreshSchema = z.object({ refreshToken: z.string().min(20) });
@@ -92,11 +111,49 @@ const allowedTaskTransitions: Record<string, string[]> = {
   COMPLETED: [],
 };
 
-function publicUser(user: { id: string; email: string; role: AuthUser["role"] }) {
+async function ensureDemoAccounts() {
+  if (!config.DEMO_ACCOUNTS_ENABLED) return;
+  const accounts = [
+    {
+      email: config.DEMO_ADMIN_EMAIL,
+      password: config.DEMO_ADMIN_PASSWORD,
+      role: "ADMIN" as const,
+    },
+    {
+      email: config.DEMO_WORKER_EMAIL,
+      password: config.DEMO_WORKER_PASSWORD,
+      role: "WORKER" as const,
+    },
+  ];
+  for (const account of accounts) {
+    const existing = await prisma.user.findUnique({
+      where: { email: account.email },
+    });
+    if (existing) continue;
+    await prisma.user.create({
+      data: {
+        email: account.email,
+        passwordHash: await hashPassword(account.password),
+        role: account.role,
+      },
+    });
+    console.warn(
+      `Demo account created for role ${account.role}: ${account.email}`,
+    );
+  }
+}
+
+function publicUser(user: {
+  id: string;
+  email: string;
+  role: AuthUser["role"];
+}) {
   return { id: user.id, email: user.email, role: user.role };
 }
 
-function asyncRoute(handler: (request: Request, response: Response) => Promise<void>) {
+function asyncRoute(
+  handler: (request: Request, response: Response) => Promise<void>,
+) {
   return (request: Request, response: Response, next: NextFunction) => {
     void handler(request, response).catch(next);
   };
@@ -112,7 +169,9 @@ function reportSessionExpiryError(error: unknown) {
   if ((error as { code?: string })?.code === "P2021") {
     if (sessionExpirySchemaWarningShown) return;
     sessionExpirySchemaWarningShown = true;
-    console.warn("Session expiry sweep is waiting for Prisma migrations to create RemoteSession.");
+    console.warn(
+      "Session expiry sweep is waiting for Prisma migrations to create RemoteSession.",
+    );
     return;
   }
   console.error("Session expiry sweep failed", error);
@@ -120,8 +179,12 @@ function reportSessionExpiryError(error: unknown) {
 
 async function expireStaleSessions() {
   const now = new Date();
-  const requestCutoff = new Date(now.getTime() - config.SESSION_REQUEST_TIMEOUT_MINUTES * 60_000);
-  const idleCutoff = new Date(now.getTime() - config.SESSION_IDLE_TIMEOUT_MINUTES * 60_000);
+  const requestCutoff = new Date(
+    now.getTime() - config.SESSION_REQUEST_TIMEOUT_MINUTES * 60_000,
+  );
+  const idleCutoff = new Date(
+    now.getTime() - config.SESSION_IDLE_TIMEOUT_MINUTES * 60_000,
+  );
   const staleSessions = await prisma.remoteSession.findMany({
     where: {
       OR: [
@@ -155,7 +218,9 @@ app.get(
       await prisma.$queryRaw`SELECT 1`;
       response.json({ ok: true, service: "linkdroid-backend", database: "up" });
     } catch {
-      response.status(503).json({ ok: false, service: "linkdroid-backend", database: "down" });
+      response
+        .status(503)
+        .json({ ok: false, service: "linkdroid-backend", database: "down" });
     }
   }),
 );
@@ -164,18 +229,36 @@ app.post(
   "/api/v1/auth/register",
   authLimiter,
   asyncRoute(async (request, response) => {
-    const body = authBodySchema.extend({
-      role: z.enum(["ADMIN", "WORKER"]).default("WORKER"),
-      adminInviteCode: z.string().optional(),
-    }).parse(request.body);
+    const body = authBodySchema
+      .extend({
+        role: z.enum(["ADMIN", "WORKER"]).default("WORKER"),
+        adminInviteCode: z.string().optional(),
+      })
+      .parse(request.body);
 
-    if (body.role === "ADMIN" && (!config.ADMIN_INVITE_CODE || body.adminInviteCode !== config.ADMIN_INVITE_CODE)) {
-      response.status(403).json({ error: "ADMIN_INVITE_REQUIRED", message: "An admin invite code is required." });
+    if (
+      body.role === "ADMIN" &&
+      (!config.ADMIN_INVITE_CODE ||
+        body.adminInviteCode !== config.ADMIN_INVITE_CODE)
+    ) {
+      response
+        .status(403)
+        .json({
+          error: "ADMIN_INVITE_REQUIRED",
+          message: "An admin invite code is required.",
+        });
       return;
     }
-    const existing = await prisma.user.findUnique({ where: { email: body.email } });
+    const existing = await prisma.user.findUnique({
+      where: { email: body.email },
+    });
     if (existing) {
-      response.status(409).json({ error: "EMAIL_IN_USE", message: "An account with this email already exists." });
+      response
+        .status(409)
+        .json({
+          error: "EMAIL_IN_USE",
+          message: "An account with this email already exists.",
+        });
       return;
     }
 
@@ -186,8 +269,15 @@ app.post(
         role: body.role,
       },
     });
-    await writeAudit(user.id, "user.registered", "User", user.id, { role: user.role });
-    response.status(201).json({ user: publicUser(user), ...(await issueTokens(publicUser(user))) });
+    await writeAudit(user.id, "user.registered", "User", user.id, {
+      role: user.role,
+    });
+    response
+      .status(201)
+      .json({
+        user: publicUser(user),
+        ...(await issueTokens(publicUser(user))),
+      });
   }),
 );
 
@@ -198,7 +288,12 @@ app.post(
     const body = authBodySchema.parse(request.body);
     const user = await prisma.user.findUnique({ where: { email: body.email } });
     if (!user || !(await verifyPassword(body.password, user.passwordHash))) {
-      response.status(401).json({ error: "INVALID_CREDENTIALS", message: "Email or password is incorrect." });
+      response
+        .status(401)
+        .json({
+          error: "INVALID_CREDENTIALS",
+          message: "Email or password is incorrect.",
+        });
       return;
     }
     const safeUser = publicUser(user);
@@ -214,7 +309,12 @@ app.post(
     try {
       response.json(await rotateRefreshToken(refreshToken));
     } catch {
-      response.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "Refresh token is invalid or expired." });
+      response
+        .status(401)
+        .json({
+          error: "INVALID_REFRESH_TOKEN",
+          message: "Refresh token is invalid or expired.",
+        });
     }
   }),
 );
@@ -246,9 +346,16 @@ app.post(
   asyncRoute(async (request, response) => {
     const body = deviceSchema.parse(request.body);
     const user = requestAuth(request);
-    const existing = await prisma.device.findUnique({ where: { deviceId: body.deviceId } });
+    const existing = await prisma.device.findUnique({
+      where: { deviceId: body.deviceId },
+    });
     if (existing && existing.userId !== user.id) {
-      response.status(409).json({ error: "DEVICE_ALREADY_PAIRED", message: "This device ID belongs to another account." });
+      response
+        .status(409)
+        .json({
+          error: "DEVICE_ALREADY_PAIRED",
+          message: "This device ID belongs to another account.",
+        });
       return;
     }
     const device = existing
@@ -272,7 +379,9 @@ app.post(
             userId: user.id,
           },
         });
-    await writeAudit(user.id, "device.registered", "Device", device.id, { deviceId: device.deviceId });
+    await writeAudit(user.id, "device.registered", "Device", device.id, {
+      deviceId: device.deviceId,
+    });
     response.status(existing ? 200 : 201).json({ device });
   }),
 );
@@ -298,11 +407,21 @@ app.delete(
       where: { deviceId, userId: requestAuth(request).id, revokedAt: null },
     });
     if (!device) {
-      response.status(404).json({ error: "DEVICE_NOT_FOUND", message: "Device was not found." });
+      response
+        .status(404)
+        .json({ error: "DEVICE_NOT_FOUND", message: "Device was not found." });
       return;
     }
-    await prisma.device.update({ where: { id: device.id }, data: { revokedAt: new Date() } });
-    await writeAudit(requestAuth(request).id, "device.revoked", "Device", device.id);
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { revokedAt: new Date() },
+    });
+    await writeAudit(
+      requestAuth(request).id,
+      "device.revoked",
+      "Device",
+      device.id,
+    );
     response.status(204).send();
   }),
 );
@@ -316,7 +435,9 @@ app.post(
       where: { deviceId, userId: requestAuth(request).id, revokedAt: null },
     });
     if (!device) {
-      response.status(404).json({ error: "DEVICE_NOT_FOUND", message: "Device was not found." });
+      response
+        .status(404)
+        .json({ error: "DEVICE_NOT_FOUND", message: "Device was not found." });
       return;
     }
     await prisma.device.update({
@@ -335,15 +456,34 @@ app.post(
     const body = sessionSchema.parse(request.body);
     const user = requestAuth(request);
     const [controller, receiver] = await Promise.all([
-      prisma.device.findFirst({ where: { deviceId: body.controllerDeviceId, userId: user.id, revokedAt: null } }),
-      prisma.device.findFirst({ where: { deviceId: body.receiverDeviceId, revokedAt: null }, include: { user: true } }),
+      prisma.device.findFirst({
+        where: {
+          deviceId: body.controllerDeviceId,
+          userId: user.id,
+          revokedAt: null,
+        },
+      }),
+      prisma.device.findFirst({
+        where: { deviceId: body.receiverDeviceId, revokedAt: null },
+        include: { user: true },
+      }),
     ]);
     if (!controller || !receiver) {
-      response.status(404).json({ error: "DEVICE_NOT_FOUND", message: "Controller or receiver device was not found." });
+      response
+        .status(404)
+        .json({
+          error: "DEVICE_NOT_FOUND",
+          message: "Controller or receiver device was not found.",
+        });
       return;
     }
     if (receiver.userId === user.id) {
-      response.status(400).json({ error: "SAME_ACCOUNT", message: "A monitoring session needs a different worker account." });
+      response
+        .status(400)
+        .json({
+          error: "SAME_ACCOUNT",
+          message: "A monitoring session needs a different worker account.",
+        });
       return;
     }
     const active = await prisma.remoteSession.findFirst({
@@ -353,7 +493,12 @@ app.post(
       },
     });
     if (active) {
-      response.status(409).json({ error: "ACTIVE_SESSION_EXISTS", message: "End the current session before starting another." });
+      response
+        .status(409)
+        .json({
+          error: "ACTIVE_SESSION_EXISTS",
+          message: "End the current session before starting another.",
+        });
       return;
     }
     const session = await prisma.remoteSession.create({
@@ -364,7 +509,13 @@ app.post(
         receiverDeviceId: receiver.id,
       },
     });
-    await writeAudit(user.id, "session.requested", "RemoteSession", session.id, { receiverDeviceId: body.receiverDeviceId });
+    await writeAudit(
+      user.id,
+      "session.requested",
+      "RemoteSession",
+      session.id,
+      { receiverDeviceId: body.receiverDeviceId },
+    );
     hub.emitToUser(receiver.userId, {
       type: "session.requested",
       sessionId: session.id,
@@ -395,36 +546,85 @@ app.get(
   }),
 );
 
-async function updateSession(request: AuthenticatedRequest, response: Response, action: "approve" | "reject" | "end") {
+async function updateSession(
+  request: AuthenticatedRequest,
+  response: Response,
+  action: "approve" | "reject" | "end",
+) {
   const user = requestAuth(request);
   const sessionId = String(request.params.id);
-  const session = await prisma.remoteSession.findUnique({ where: { id: sessionId } });
-  if (!session || (session.requesterId !== user.id && session.receiverId !== user.id)) {
-    response.status(404).json({ error: "SESSION_NOT_FOUND", message: "Session was not found." });
+  const session = await prisma.remoteSession.findUnique({
+    where: { id: sessionId },
+  });
+  if (
+    !session ||
+    (session.requesterId !== user.id && session.receiverId !== user.id)
+  ) {
+    response
+      .status(404)
+      .json({ error: "SESSION_NOT_FOUND", message: "Session was not found." });
     return;
   }
   if (action === "approve" && session.receiverId !== user.id) {
-    response.status(403).json({ error: "ONLY_RECEIVER_CAN_APPROVE", message: "Only the worker can approve a session." });
+    response
+      .status(403)
+      .json({
+        error: "ONLY_RECEIVER_CAN_APPROVE",
+        message: "Only the worker can approve a session.",
+      });
     return;
   }
   if (action === "reject" && session.receiverId !== user.id) {
-    response.status(403).json({ error: "ONLY_RECEIVER_CAN_REJECT", message: "Only the worker can reject a session." });
+    response
+      .status(403)
+      .json({
+        error: "ONLY_RECEIVER_CAN_REJECT",
+        message: "Only the worker can reject a session.",
+      });
     return;
   }
   if (action === "approve" && session.status !== "REQUESTED") {
-    response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only a requested session can be approved." });
+    response
+      .status(409)
+      .json({
+        error: "INVALID_SESSION_STATE",
+        message: "Only a requested session can be approved.",
+      });
     return;
   }
   if (action === "reject" && session.status !== "REQUESTED") {
-    response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only a requested session can be rejected." });
+    response
+      .status(409)
+      .json({
+        error: "INVALID_SESSION_STATE",
+        message: "Only a requested session can be rejected.",
+      });
     return;
   }
-  if (action === "end" && !["REQUESTED", "APPROVED", "ACTIVE"].includes(session.status)) {
-    response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only an active session can be ended." });
+  if (
+    action === "end" &&
+    !["REQUESTED", "APPROVED", "ACTIVE"].includes(session.status)
+  ) {
+    response
+      .status(409)
+      .json({
+        error: "INVALID_SESSION_STATE",
+        message: "Only an active session can be ended.",
+      });
     return;
   }
-  const status = action === "approve" ? "APPROVED" : action === "reject" ? "REJECTED" : "ENDED";
-  const eventName = action === "approve" ? "approved" : action === "reject" ? "rejected" : "ended";
+  const status =
+    action === "approve"
+      ? "APPROVED"
+      : action === "reject"
+        ? "REJECTED"
+        : "ENDED";
+  const eventName =
+    action === "approve"
+      ? "approved"
+      : action === "reject"
+        ? "rejected"
+        : "ended";
   const updated = await prisma.remoteSession.update({
     where: { id: session.id },
     data: {
@@ -433,15 +633,42 @@ async function updateSession(request: AuthenticatedRequest, response: Response, 
       endedAt: action === "end" ? new Date() : undefined,
     },
   });
-  await writeAudit(user.id, `session.${eventName}`, "RemoteSession", session.id);
-  const targetUserId = user.id === session.requesterId ? session.receiverId : session.requesterId;
-  hub.emitToUser(targetUserId, { type: `session.${eventName}`, session: updated });
+  await writeAudit(
+    user.id,
+    `session.${eventName}`,
+    "RemoteSession",
+    session.id,
+  );
+  const targetUserId =
+    user.id === session.requesterId ? session.receiverId : session.requesterId;
+  hub.emitToUser(targetUserId, {
+    type: `session.${eventName}`,
+    session: updated,
+  });
   response.json({ session: updated });
 }
 
-app.post("/api/v1/sessions/:id/approve", requireAuth, asyncRoute((request, response) => updateSession(request as AuthenticatedRequest, response, "approve")));
-app.post("/api/v1/sessions/:id/reject", requireAuth, asyncRoute((request, response) => updateSession(request as AuthenticatedRequest, response, "reject")));
-app.post("/api/v1/sessions/:id/end", requireAuth, asyncRoute((request, response) => updateSession(request as AuthenticatedRequest, response, "end")));
+app.post(
+  "/api/v1/sessions/:id/approve",
+  requireAuth,
+  asyncRoute((request, response) =>
+    updateSession(request as AuthenticatedRequest, response, "approve"),
+  ),
+);
+app.post(
+  "/api/v1/sessions/:id/reject",
+  requireAuth,
+  asyncRoute((request, response) =>
+    updateSession(request as AuthenticatedRequest, response, "reject"),
+  ),
+);
+app.post(
+  "/api/v1/sessions/:id/end",
+  requireAuth,
+  asyncRoute((request, response) =>
+    updateSession(request as AuthenticatedRequest, response, "end"),
+  ),
+);
 
 app.post(
   "/api/v1/tasks",
@@ -451,16 +678,32 @@ app.post(
     const body = taskSchema.parse(request.body);
     const user = requestAuth(request);
     const device = await prisma.device.findFirst({
-      where: { deviceId: body.workerDeviceId, userId: user.id, revokedAt: null },
+      where: {
+        deviceId: body.workerDeviceId,
+        userId: user.id,
+        revokedAt: null,
+      },
     });
     if (!device) {
-      response.status(404).json({ error: "DEVICE_NOT_FOUND", message: "Worker device is not paired to this account." });
+      response
+        .status(404)
+        .json({
+          error: "DEVICE_NOT_FOUND",
+          message: "Worker device is not paired to this account.",
+        });
       return;
     }
     if (body.adminId) {
-      const admin = await prisma.user.findFirst({ where: { id: body.adminId, role: "ADMIN" } });
+      const admin = await prisma.user.findFirst({
+        where: { id: body.adminId, role: "ADMIN" },
+      });
       if (!admin) {
-        response.status(400).json({ error: "ADMIN_NOT_FOUND", message: "Assigned admin was not found." });
+        response
+          .status(400)
+          .json({
+            error: "ADMIN_NOT_FOUND",
+            message: "Assigned admin was not found.",
+          });
         return;
       }
     }
@@ -479,7 +722,8 @@ app.post(
       },
     });
     await writeAudit(user.id, "task.created", "CustomerTask", task.id);
-    if (body.adminId) hub.emitToUser(body.adminId, { type: "task.created", task });
+    if (body.adminId)
+      hub.emitToUser(body.adminId, { type: "task.created", task });
     response.status(201).json({ task });
   }),
 );
@@ -490,7 +734,10 @@ app.get(
   asyncRoute(async (request, response) => {
     const user = requestAuth(request);
     const tasks = await prisma.customerTask.findMany({
-      where: user.role === "ADMIN" ? { OR: [{ adminId: user.id }, { adminId: null }] } : { workerId: user.id },
+      where:
+        user.role === "ADMIN"
+          ? { OR: [{ adminId: user.id }, { adminId: null }] }
+          : { workerId: user.id },
       orderBy: { updatedAt: "desc" },
       take: 100,
     });
@@ -505,12 +752,19 @@ app.patch(
     const body = taskStatusSchema.parse(request.body);
     const user = requestAuth(request);
     const taskId = String(request.params.id);
-    const task = await prisma.customerTask.findUnique({ where: { id: taskId } });
+    const task = await prisma.customerTask.findUnique({
+      where: { id: taskId },
+    });
     if (!task || (task.workerId !== user.id && task.adminId !== user.id)) {
-      response.status(404).json({ error: "TASK_NOT_FOUND", message: "Task was not found." });
+      response
+        .status(404)
+        .json({ error: "TASK_NOT_FOUND", message: "Task was not found." });
       return;
     }
-    if (task.status !== body.status && !allowedTaskTransitions[task.status]?.includes(body.status)) {
+    if (
+      task.status !== body.status &&
+      !allowedTaskTransitions[task.status]?.includes(body.status)
+    ) {
       response.status(409).json({
         error: "INVALID_TASK_TRANSITION",
         message: `A task cannot move from ${task.status} to ${body.status}.`,
@@ -524,9 +778,12 @@ app.patch(
         completedAt: body.status === "COMPLETED" ? new Date() : null,
       },
     });
-    await writeAudit(user.id, "task.status_changed", "CustomerTask", task.id, { status: body.status });
+    await writeAudit(user.id, "task.status_changed", "CustomerTask", task.id, {
+      status: body.status,
+    });
     const target = user.id === task.workerId ? task.adminId : task.workerId;
-    if (target) hub.emitToUser(target, { type: "task.status_changed", task: updated });
+    if (target)
+      hub.emitToUser(target, { type: "task.status_changed", task: updated });
     response.json({ task: updated });
   }),
 );
@@ -548,7 +805,10 @@ app.get(
     });
     response.json({
       logs,
-      nextCursor: logs.length === query.limit ? logs.at(-1)?.createdAt.toISOString() ?? null : null,
+      nextCursor:
+        logs.length === query.limit
+          ? (logs.at(-1)?.createdAt.toISOString() ?? null)
+          : null,
     });
   }),
 );
@@ -558,26 +818,49 @@ app.get(
   requireAuth,
   asyncRoute(async (_request, response) => {
     if (!turnUrls.length || !config.TURN_USERNAME || !config.TURN_CREDENTIAL) {
-      response.status(503).json({ error: "TURN_NOT_CONFIGURED", message: "TURN credentials are not configured on the backend." });
+      response
+        .status(503)
+        .json({
+          error: "TURN_NOT_CONFIGURED",
+          message: "TURN credentials are not configured on the backend.",
+        });
       return;
     }
     response.json({
       iceServers: [
         { urls: ["stun:103.245.38.142:3478"] },
-        { urls: turnUrls, username: config.TURN_USERNAME, credential: config.TURN_CREDENTIAL },
+        {
+          urls: turnUrls,
+          username: config.TURN_USERNAME,
+          credential: config.TURN_CREDENTIAL,
+        },
       ],
     });
   }),
 );
 
-app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
-  if (error instanceof z.ZodError) {
-    response.status(400).json({ error: "VALIDATION_ERROR", details: error.flatten() });
-    return;
-  }
-  console.error(error);
-  response.status(500).json({ error: "INTERNAL_ERROR", message: "The server could not complete the request." });
-});
+app.use(
+  (
+    error: unknown,
+    _request: Request,
+    response: Response,
+    _next: NextFunction,
+  ) => {
+    if (error instanceof z.ZodError) {
+      response
+        .status(400)
+        .json({ error: "VALIDATION_ERROR", details: error.flatten() });
+      return;
+    }
+    console.error(error);
+    response
+      .status(500)
+      .json({
+        error: "INTERNAL_ERROR",
+        message: "The server could not complete the request.",
+      });
+  },
+);
 
 httpServer.on("upgrade", async (request, socket, head) => {
   const requestUrl = new URL(request.url ?? "/", "http://localhost");
@@ -596,9 +879,18 @@ httpServer.on("upgrade", async (request, socket, head) => {
   }
 });
 
-httpServer.listen(config.PORT, config.HOST, () => {
-  console.log(`LinkDroid backend listening on http://${config.HOST}:${config.PORT}`);
-});
+void ensureDemoAccounts()
+  .then(() => {
+    httpServer.listen(config.PORT, config.HOST, () => {
+      console.log(
+        `LinkDroid backend listening on http://${config.HOST}:${config.PORT}`,
+      );
+    });
+  })
+  .catch((error) => {
+    console.error("Unable to initialize demo accounts", error);
+    process.exitCode = 1;
+  });
 
 const sessionExpiryTimer = setInterval(() => {
   void expireStaleSessions().catch(reportSessionExpiryError);

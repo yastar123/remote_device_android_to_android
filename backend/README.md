@@ -33,14 +33,9 @@ Authorization: Bearer <accessToken>
 
 ### Auth
 
-- `POST /api/v1/auth/register`
-  - Body: `{ "email", "password", "role": "WORKER" }`
-  - Role `ADMIN` membutuhkan `adminInviteCode` yang sama dengan
-    `ADMIN_INVITE_CODE`.
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/refresh`
-- `POST /api/v1/auth/logout`
-- `GET /api/v1/me`
+- Body: `{ "email", "password", "role": "WORKER" }`
+- Role `ADMIN` membutuhkan `adminInviteCode` yang sama dengan
+  `ADMIN_INVITE_CODE`.
 
 Password minimal 8 karakter. Access token berumur pendek dan refresh token
 disimpan sebagai hash di database serta dirotasi setiap kali digunakan.
