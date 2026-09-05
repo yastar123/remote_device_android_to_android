@@ -16,12 +16,47 @@ const signalSchema = z.discriminatedUnion("type", [
     type: z.literal("session.ping"),
     sessionId: z.string().uuid(),
   }),
+  z.object({
+    type: z.literal("session.command"),
+    sessionId: z.string().uuid(),
+    commandId: z.string().uuid(),
+    command: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("tap"),
+        x: z.number().finite().min(0).max(1),
+        y: z.number().finite().min(0).max(1),
+        durationMs: z.number().int().min(1).max(5_000).default(80),
+      }),
+      z.object({
+        kind: z.literal("swipe"),
+        startX: z.number().finite().min(0).max(1),
+        startY: z.number().finite().min(0).max(1),
+        endX: z.number().finite().min(0).max(1),
+        endY: z.number().finite().min(0).max(1),
+        durationMs: z.number().int().min(1).max(5_000).default(400),
+      }),
+      z.object({
+        kind: z.literal("text"),
+        value: z.string().max(1_000),
+      }),
+      z.object({ kind: z.literal("back") }),
+      z.object({ kind: z.literal("home") }),
+    ]),
+  }),
+  z.object({
+    type: z.literal("session.command.result"),
+    sessionId: z.string().uuid(),
+    commandId: z.string().uuid(),
+    ok: z.boolean(),
+    error: z.string().max(120).optional(),
+  }),
 ]);
 
 type Client = { socket: WebSocket; user: AuthUser; deviceId: string };
 
 export class SignalingHub {
   private readonly clients = new Map<string, Set<Client>>();
+  private readonly commandTimeouts = new Map<string, NodeJS.Timeout>();
 
   attach(socket: WebSocket, user: AuthUser, deviceId: string) {
     const client = { socket, user, deviceId };
@@ -42,6 +77,15 @@ export class SignalingHub {
     const payload = JSON.stringify(message);
     for (const client of this.clients.get(userId) ?? []) {
       if (client.socket.readyState === WebSocket.OPEN) client.socket.send(payload);
+    }
+  }
+
+  emitToDevice(userId: string, deviceId: string, message: unknown) {
+    const payload = JSON.stringify(message);
+    for (const client of this.clients.get(userId) ?? []) {
+      if (client.deviceId === deviceId && client.socket.readyState === WebSocket.OPEN) {
+        client.socket.send(payload);
+      }
     }
   }
 
@@ -94,6 +138,55 @@ export class SignalingHub {
         data: { updatedAt: new Date() },
       });
       client.socket.send(JSON.stringify({ type: "session.pong", sessionId: session.id }));
+      return;
+    }
+
+    if (message.type === "session.command") {
+      if (!isController) {
+        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_FORBIDDEN" }));
+        return;
+      }
+      this.emitToDevice(session.receiverId, session.receiverDeviceId, {
+        type: "session.command",
+        sessionId: session.id,
+        commandId: message.commandId,
+        command: message.command,
+        fromDeviceId: client.deviceId,
+      });
+      const previousTimeout = this.commandTimeouts.get(message.commandId);
+      if (previousTimeout) clearTimeout(previousTimeout);
+      this.commandTimeouts.set(
+        message.commandId,
+        setTimeout(() => {
+          this.commandTimeouts.delete(message.commandId);
+          this.emitToDevice(session.requesterId, session.controllerDeviceId, {
+            type: "session.command.result",
+            sessionId: session.id,
+            commandId: message.commandId,
+            ok: false,
+            error: "COMMAND_TIMEOUT",
+          });
+        }, 15_000),
+      );
+      return;
+    }
+
+    if (message.type === "session.command.result") {
+      if (!isReceiver) {
+        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_RESULT_FORBIDDEN" }));
+        return;
+      }
+      const timeout = this.commandTimeouts.get(message.commandId);
+      if (timeout) clearTimeout(timeout);
+      this.commandTimeouts.delete(message.commandId);
+      this.emitToDevice(session.requesterId, session.controllerDeviceId, {
+        type: "session.command.result",
+        sessionId: session.id,
+        commandId: message.commandId,
+        ok: message.ok,
+        ...(message.error ? { error: message.error } : {}),
+        fromDeviceId: client.deviceId,
+      });
       return;
     }
 

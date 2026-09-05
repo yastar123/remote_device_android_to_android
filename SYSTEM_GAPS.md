@@ -40,7 +40,7 @@ di dalam artifact Android.
 | REST session lifecycle | Ada | Media dan kontrol remote belum terhubung. |
 | WebSocket signaling relay | Ada dengan ping, aktivasi, dan reconnect | Android belum membuat `PeerConnection` atau mengirim signal dari alur UI. |
 | Screen capture lokal | Ada | Hanya membuat VirtualDisplay dan membaca lalu membuang frame. |
-| Accessibility service | Ada | Hanya memiliki helper tap; belum menerima command remote. |
+| Accessibility service | Ada dan menerima command remote | Command tap, swipe, text, back, dan home divalidasi, dibatasi pada session, serta mengembalikan acknowledgment melalui signaling WebSocket. |
 | WebRTC/video/audio | Tidak ada | Tidak ada dependency atau implementasi `PeerConnection`. |
 | Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif. |
 | Release build/signing | Belum ada | Belum ada keystore, signing config, AAB, atau pipeline release. |
@@ -287,15 +287,19 @@ yang sudah aktif.
 
 ### B. Kontrol remote belum terhubung
 
-Accessibility Service baru memiliki helper `tap`. Belum ada:
+Accessibility Service menerima command remote melalui signaling WebSocket
+terautentikasi:
 
-- schema command remote;
-- validasi koordinat;
-- pembatasan command terhadap session yang approved;
-- antrian dan timeout command;
-- hasil berhasil/gagal dari perangkat receiver;
-- swipe, text input, back, home, atau command lain;
-- pengiriman command melalui WebRTC data channel atau transport lain.
+- schema command `tap`, `swipe`, `text`, `back`, dan `home`;
+- validasi koordinat rasio `0..1`, durasi gesture, dan panjang text;
+- pembatasan command controller kepada receiver pada session `APPROVED` atau
+  `ACTIVE`;
+- timeout command 15 detik di signaling hub;
+- acknowledgment berhasil/gagal dari perangkat receiver;
+- implementasi gesture dan global action pada Accessibility Service.
+
+Command saat ini masih memakai signaling WebSocket, bukan WebRTC data channel.
+Data channel tetap diperlukan agar kontrol tidak bergantung pada relay signaling.
 
 ### C. Auth client masih memiliki batasan
 
@@ -313,9 +317,10 @@ akun.
 ### D. Lifecycle sesi belum tahan terhadap process death
 
 State utama session, screen sharing, task yang baru dibuat, dan pesan UI berada
-di state Activity/Compose. Belum ada repository/session store yang memulihkan
-state secara penuh setelah process death, recreation, atau service berjalan
-terpisah.
+di state Activity/Compose. Metadata session ID, peer device ID, dan role kini
+dipersist ke preferences dan dipulihkan setelah recreation/process death.
+Pemulihan penuh capture service, token refresh lintas process, dan task draft
+masih belum tersedia.
 
 Backend sudah memiliki scheduler expiry dan client sudah memiliki retry/backoff
 WebSocket. Yang masih belum selesai adalah pemulihan penuh state session,
@@ -489,8 +494,8 @@ Urutan yang paling langsung berdasarkan gap saat ini:
    dengan dua akun.
 5. Tambahkan integrasi WebRTC Android: `PeerConnection`, offer/answer, ICE,
    TURN, video frame, dan lifecycle connection.
-6. Tambahkan data channel serta command remote yang tervalidasi dan dibatasi
-   pada session approved.
+6. Pindahkan command remote dari relay WebSocket ke WebRTC data channel dan
+   tambahkan video renderer pada controller.
 7. Perbaiki pemulihan state lintas process death, Activity, dan service.
 8. Tambahkan test unit, integration, instrumented, lint, dan uji perangkat
    fisik.
@@ -509,7 +514,9 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 - [ ] WebSocket authentication dan reconnect diuji pada environment Android.
 - [ ] WebRTC video benar-benar mengirim frame ke controller.
 - [ ] TURN/STUN diuji pada jaringan yang relevan.
-- [ ] Data channel command remote divalidasi dan memiliki timeout/error response.
+- [x] Command remote melalui signaling WebSocket divalidasi dan memiliki
+  timeout/error response.
+- [ ] Data channel command remote berjalan setelah WebRTC aktif.
 - [ ] Accessibility dan MediaProjection diuji pada versi Android target.
 - [ ] Background, process death, orientation, dan battery restriction diuji.
 - [ ] Customer task dan status lifecycle diuji.
@@ -523,14 +530,15 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 
 LinkDroid saat ini adalah fondasi aplikasi Android native dan backend API yang
 sudah memiliki auth, device pairing, heartbeat, customer task, request/
-approval session, audit log, serta relay WebSocket. Screen capture lokal dan
-Accessibility Service juga sudah dideklarasikan, tetapi keduanya belum
-terhubung ke transport remote.
+approval session, audit log, relay WebSocket, serta command remote tervalidasi
+dengan acknowledgment. Screen capture lokal dan Accessibility Service sudah
+terhubung ke signaling command, tetapi belum terhubung ke WebRTC video/data
+transport.
 
 Sistem ini belum dapat disebut remote-support end-to-end karena belum memiliki
-WebRTC/video, data channel, command remote, deployment yang terverifikasi, dan
-pengujian dua perangkat. Refresh token client, expiry session backend, dan
-reconnect signaling sudah diimplementasikan, tetapi tetap perlu diuji pada
-environment Android dan jaringan yang relevan. Dokumentasi atau UI yang
-menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti bahwa koneksi
-media sudah aktif.
+WebRTC/video, data channel, deployment yang terverifikasi, dan pengujian dua
+perangkat. Refresh token client, expiry session backend, reconnect signaling,
+serta command remote melalui signaling sudah diimplementasikan, tetapi tetap
+perlu diuji pada environment Android dan jaringan yang relevan. Dokumentasi
+atau UI yang menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti
+bahwa koneksi media sudah aktif.

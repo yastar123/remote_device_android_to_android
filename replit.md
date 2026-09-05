@@ -67,7 +67,20 @@ video/control antarperangkat yang benar-benar aktif.
 - `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/ScreenCaptureService.kt` — foreground service dan VirtualDisplay.
 - `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/RemoteAccessibilityService.kt` — service kontrol sentuhan.
 - `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/RemoteSessionCoordinator.kt` — state machine sesi.
+- `artifacts/linkdroid-android/native-kotlin/app/src/main/java/app/linkdroid/remote/RemoteCommand.kt` — schema command tap, swipe, text, back, dan home.
 - `artifacts/linkdroid-android/native-kotlin/app/src/main/AndroidManifest.xml` — activity, service, dan permission Android.
+
+## Command remote dan pemulihan sesi
+
+Setelah session disetujui, controller dapat mengirim command aksesibilitas
+melalui WebSocket signaling terautentikasi. Backend membatasi command ke device
+receiver pada session `APPROVED` atau `ACTIVE`, memvalidasi payload, dan
+mengembalikan hasil atau timeout. Receiver harus mengaktifkan Accessibility
+Service Android agar gesture/global action dapat dijalankan.
+
+Metadata session ID, device pasangan, dan role disimpan di preferences sehingga
+Activity dapat memulihkan session setelah recreation atau process death. Ini
+belum memulihkan capture service atau koneksi media WebRTC.
 
 ## Prinsip keamanan
 

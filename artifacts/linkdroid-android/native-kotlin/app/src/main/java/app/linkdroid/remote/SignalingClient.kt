@@ -29,6 +29,8 @@ class SignalingClient(
         fun onConnected()
         fun onSessionRequested(session: IncomingSession)
         fun onSessionEvent(type: String, sessionId: String)
+        fun onRemoteCommand(sessionId: String, commandId: String, command: RemoteCommand) {}
+        fun onRemoteCommandResult(sessionId: String, commandId: String, ok: Boolean, error: String?) {}
         fun onError(message: String)
     }
 
@@ -126,6 +128,32 @@ class SignalingClient(
         )
     }
 
+    fun sendCommand(sessionId: String, commandId: String, command: RemoteCommand): Boolean =
+        socket?.send(
+            JSONObject()
+                .put("type", "session.command")
+                .put("sessionId", sessionId)
+                .put("commandId", commandId)
+                .put("command", command.toJson())
+                .toString(),
+        ) == true
+
+    fun sendCommandResult(
+        sessionId: String,
+        commandId: String,
+        ok: Boolean,
+        error: String? = null,
+    ): Boolean =
+        socket?.send(
+            JSONObject()
+                .put("type", "session.command.result")
+                .put("sessionId", sessionId)
+                .put("commandId", commandId)
+                .put("ok", ok)
+                .apply { if (!error.isNullOrBlank()) put("error", error) }
+                .toString(),
+        ) == true
+
     fun close() {
         closed = true
         reconnectTask?.cancel(true)
@@ -152,8 +180,36 @@ class SignalingClient(
                         ),
                     )
                 }
-                "session.approved", "session.rejected", "session.ended" -> {
-                    listener.onSessionEvent(message.optString("type"), message.getJSONObject("session").getString("id"))
+                "session.approved", "session.rejected", "session.ended", "session.expired", "session.active" -> {
+                    val session = message.optJSONObject("session")
+                    val eventSessionId = session?.optString("id").takeUnless { it.isNullOrBlank() }
+                        ?: message.optString("sessionId").takeUnless { it.isNullOrBlank() }
+                    if (eventSessionId == null) {
+                        listener.onError("Event sesi tidak memiliki sessionId")
+                    } else {
+                        listener.onSessionEvent(message.optString("type"), eventSessionId)
+                    }
+                }
+                "session.command" -> {
+                    val command = message.optJSONObject("command")
+                        ?.let(RemoteCommand::fromJson)
+                    if (command == null) {
+                        listener.onError("Perintah remote tidak valid")
+                    } else {
+                        listener.onRemoteCommand(
+                            sessionId = message.getString("sessionId"),
+                            commandId = message.getString("commandId"),
+                            command = command,
+                        )
+                    }
+                }
+                "session.command.result" -> {
+                    listener.onRemoteCommandResult(
+                        sessionId = message.getString("sessionId"),
+                        commandId = message.getString("commandId"),
+                        ok = message.optBoolean("ok", false),
+                        error = message.optString("error").takeIf { it.isNotBlank() },
+                    )
                 }
                 "error" -> listener.onError(message.optString("error", "Signaling error"))
             }

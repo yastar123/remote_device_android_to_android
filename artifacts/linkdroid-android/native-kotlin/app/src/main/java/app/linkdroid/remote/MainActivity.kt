@@ -152,8 +152,19 @@ class MainActivity : ComponentActivity() {
         var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
         var submittedCustomer by remember { mutableStateOf<CustomerData?>(null) }
-        val sessionCoordinator = remember { RemoteSessionCoordinator() }
+        val sessionCoordinator = remember {
+            RemoteSessionCoordinator(getPreferences(MODE_PRIVATE))
+        }
         val activeRemoteSession by sessionCoordinator.session.collectAsState()
+        var sendRemoteCommand by remember { mutableStateOf<((RemoteCommand) -> Boolean)?>(null) }
+        LaunchedEffect(activeRemoteSession?.sessionId) {
+            val restoredSession = activeRemoteSession
+            if (restoredSession != null && screen == AppScreen.HOME) {
+                activeSession = restoredSession.peerDeviceId
+                screen = AppScreen.SESSION
+                message = "Sesi sebelumnya dipulihkan. Verifikasi status sesi dengan server."
+            }
+        }
         val registerCurrentDevice: () -> Unit = {
             val registeredEmail = email
             if (registeredEmail.isNullOrBlank() || accessToken.isNullOrBlank()) {
@@ -233,7 +244,8 @@ class MainActivity : ComponentActivity() {
             if (token.isNullOrBlank()) {
                 onDispose { }
             } else {
-                val signaling = SignalingClient(
+                lateinit var signaling: SignalingClient
+                signaling = SignalingClient(
                     baseUrl = BuildConfig.BACKEND_BASE_URL,
                     accessToken = token,
                     deviceId = currentDeviceId,
@@ -265,13 +277,51 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
+                        override fun onRemoteCommand(sessionId: String, commandId: String, command: RemoteCommand) {
+                            RemoteAccessibilityService.execute(command) { ok, error ->
+                                signaling.sendCommandResult(
+                                    sessionId = sessionId,
+                                    commandId = commandId,
+                                    ok = ok,
+                                    error = error,
+                                )
+                            }
+                        }
+
+                        override fun onRemoteCommandResult(
+                            sessionId: String,
+                            commandId: String,
+                            ok: Boolean,
+                            error: String?,
+                        ) {
+                            runOnUiThread {
+                                message = if (ok) {
+                                    "Perintah remote berhasil dijalankan."
+                                } else {
+                                    "Perintah remote gagal: ${error ?: "perangkat menolak perintah"}"
+                                }
+                            }
+                        }
+
                         override fun onError(messageText: String) {
                             runOnUiThread { message = "Signaling: $messageText" }
                         }
                     },
                 )
+                sendRemoteCommand = { command ->
+                    val session = activeRemoteSession
+                    session != null && session.role == RemoteSession.Role.CONTROLLER &&
+                        signaling.sendCommand(
+                            sessionId = session.sessionId,
+                            commandId = java.util.UUID.randomUUID().toString(),
+                            command = command,
+                        )
+                }
                 signaling.connect()
-                onDispose { signaling.close() }
+                onDispose {
+                    sendRemoteCommand = null
+                    signaling.close()
+                }
             }
         }
         val captureLauncher = rememberLauncherForActivityResult(StartActivityForResult()) { result ->
@@ -578,6 +628,7 @@ class MainActivity : ComponentActivity() {
 
                 AppScreen.SESSION -> SessionScreen(
                     deviceId = activeSession.orEmpty(),
+                    isController = activeRemoteSession?.role == RemoteSession.Role.CONTROLLER,
                     message = message,
                     isScreenSharing = isScreenSharing,
                     onShareScreen = requestScreenShare,
@@ -608,6 +659,11 @@ class MainActivity : ComponentActivity() {
                         activeSession = null
                         message = "Sesi remote diakhiri."
                         screen = AppScreen.HOME
+                    },
+                    onCommand = { command ->
+                        if (sendRemoteCommand?.invoke(command) != true) {
+                            message = "Perintah belum dapat dikirim; pastikan sesi aktif."
+                        }
                     },
                     modifier = Modifier.padding(padding),
                 )
@@ -1435,21 +1491,29 @@ private fun DevicesScreen(
 @Composable
 private fun SessionScreen(
     deviceId: String,
+    isController: Boolean,
     message: String?,
     isScreenSharing: Boolean,
     onShareScreen: () -> Unit,
     onStopSharing: () -> Unit,
     onStop: () -> Unit,
+    onCommand: (RemoteCommand) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var audioEnabled by rememberSaveable { mutableStateOf(false) }
+    var tapX by rememberSaveable { mutableStateOf("0.5") }
+    var tapY by rememberSaveable { mutableStateOf("0.5") }
     Page(modifier) {
         Header("Sesi remote", "Koneksi aman dengan perangkat tujuan")
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Menghubungkan ke", color = LinkDroidColors.muted)
                 Text(formatDeviceId(deviceId), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Menunggu persetujuan perangkat penerima", color = LinkDroidColors.primary)
+                Text(
+                    if (isController) "Kontrol tersedia setelah perangkat penerima menyetujui sesi"
+                    else "Layar dan kontrol hanya aktif setelah sesi disetujui",
+                    color = LinkDroidColors.primary,
+                )
                 HorizontalDivider()
                 Text("Layar dan kontrol sentuhan hanya aktif setelah penerima menyetujui sesi.", color = LinkDroidColors.muted)
                 if (message != null) Notice(message)
@@ -1464,6 +1528,51 @@ private fun SessionScreen(
                     audioEnabled,
                     enabled = false,
                 ) { audioEnabled = it }
+                if (isController) {
+                    HorizontalDivider()
+                    Text("Kontrol aksesibilitas", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Koordinat menggunakan rasio 0.0–1.0 dari ukuran layar perangkat penerima.",
+                        color = LinkDroidColors.muted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = tapX,
+                            onValueChange = { tapX = it },
+                            label = { Text("X") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = tapY,
+                            onValueChange = { tapY = it },
+                            label = { Text("Y") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            val x = tapX.toFloatOrNull()
+                            val y = tapY.toFloatOrNull()
+                            if (x != null && y != null && x in 0f..1f && y in 0f..1f) {
+                                onCommand(RemoteCommand.Tap(x, y))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Kirim tap") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onCommand(RemoteCommand.Back) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Back") }
+                        OutlinedButton(
+                            onClick = { onCommand(RemoteCommand.Home) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Home") }
+                    }
+                }
                 OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Akhiri sesi") }
             }
         }
