@@ -1,0 +1,47 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "Repository ini adalah satu repository untuk aplikasi Android native berbasis Kotlin dan Jetpack Compose. Tidak ada workspace web atau backend palsu yang disamarkan sebagai fitur remote.",
+  "private": true,
+  "main": "backend/dist/server.js",
+  "scripts": {
+    "backend:dev": "tsx watch backend/src/server.ts",
+    "backend:build": "tsc -p tsconfig.backend.json",
+    "backend:start": "node backend/dist/server.js",
+    "backend:prisma:generate": "prisma generate --schema backend/prisma/schema.prisma",
+    "backend:prisma:migrate": "prisma migrate deploy --schema backend/prisma/schema.prisma",
+    "backend:prisma:format": "prisma format --schema backend/prisma/schema.prisma"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yastar123/remote_device_android_to_android.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/yastar123/remote_device_android_to_android/issues"
+  },
+  "homepage": "https://github.com/yastar123/remote_device_android_to_android#readme",
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.4.1",
+    "@types/ws": "^8.18.1",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^6.19.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.3",
+    "zod": "^4.5.4"
+  }
+}

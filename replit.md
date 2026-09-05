@@ -1,8 +1,9 @@
 # LinkDroid Android Remote
 
 LinkDroid adalah aplikasi Android native yang seluruh UI dan kemampuan perangkatnya
-dibuat dengan Kotlin dan Jetpack Compose. Repository ini sengaja tidak lagi memiliki
-website, Expo, server Node.js, atau workspace JavaScript.
+dibuat dengan Kotlin dan Jetpack Compose. Backend Node.js untuk API dan signaling
+berada di folder `backend/`; repository ini tidak memiliki website atau Expo
+workspace.
 
 ## Build APK
 
@@ -31,10 +32,11 @@ platform tersebut.
 Domain TLS yang disiapkan untuk integrasi backend adalah:
 `https://103-245-38-142.sslip.io`
 
-Endpoint tersebut baru menjadi nilai konfigurasi build. Aplikasi saat ini belum
-memanggil API atau WebSocket karena backend/signaling dan kontraknya belum ada.
-Jangan menganggap tombol `Hubungkan` sebagai koneksi antarperangkat sebelum
-backend, autentikasi, signaling, dan WebRTC selesai.
+Backend Node.js, skema Prisma, API auth/device/task/session, dan relay WebSocket
+signaling tersedia di `backend/`. Backend harus listen di `127.0.0.1:3000` agar
+sesuai dengan Nginx. Integrasi Android dengan token, WebSocket signaling, dan
+WebRTC media masih perlu diselesaikan sebelum tombol `Hubungkan` menjadi koneksi
+video/control antarperangkat yang benar-benar aktif.
 
 ## Alur monitoring petugas
 
@@ -46,8 +48,8 @@ backend, autentikasi, signaling, dan WebRTC selesai.
 - Tombol `Simpan & Lanjut` memvalidasi IDPEL 11–12 digit dan seluruh field sebelum
   membawa petugas ke tahap PLN Mobile.
 - Di tahap PLN Mobile, petugas dapat meminta izin MediaProjection Android agar
-  layar dapat dipantau. Pemantauan antar-device yang benar-benar tersambung tetap
-  menunggu backend signaling/WebRTC.
+  layar dapat dipantau. Pemantauan antar-device yang benar-benar tersambung
+  memerlukan APK yang sudah memakai backend signaling/WebRTC.
 
 ## Stack
 
@@ -57,6 +59,7 @@ backend, autentikasi, signaling, dan WebRTC selesai.
 - MediaProjection dan foreground service
 - Accessibility Service untuk aksi sentuhan yang disetujui pengguna
 - SharedPreferences untuk sesi lokal dan daftar perangkat
+- Node.js, Express, Prisma, PostgreSQL, JWT, dan WebSocket untuk backend
 
 ## Struktur
 

@@ -1,2 +1,3 @@
 - [LinkDroid native and preview split](linkdroid-native-preview.md) — Keep the Expo preview and native Kotlin remote-control path aligned.
 - [Native Android build environment](android-native-build.md) — Native APK builds need Android SDK + Java/Gradle; Java alone is insufficient.
+- [Prisma CLI compatibility](prisma-cli-compatibility.md) — Keep backend Prisma CLI/client on stable 6.x; the installed 8.x RC lacks the standard generate/format commands.

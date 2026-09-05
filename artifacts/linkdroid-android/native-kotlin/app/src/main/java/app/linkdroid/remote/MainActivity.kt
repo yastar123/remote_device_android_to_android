@@ -74,6 +74,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
@@ -96,6 +98,9 @@ class MainActivity : ComponentActivity() {
         var email by rememberSaveable {
             mutableStateOf(getPreferences(MODE_PRIVATE).getString("email", null))
         }
+        var accessToken by rememberSaveable {
+            mutableStateOf(getPreferences(MODE_PRIVATE).getString("access_token", null))
+        }
         var role by rememberSaveable {
             mutableStateOf(
                 getPreferences(MODE_PRIVATE).getString("role", UserRole.ADMIN.name)
@@ -103,7 +108,9 @@ class MainActivity : ComponentActivity() {
                     ?: UserRole.ADMIN,
             )
         }
-        var screen by rememberSaveable { mutableStateOf(if (email == null) AppScreen.LOGIN else AppScreen.HOME) }
+        var screen by rememberSaveable {
+            mutableStateOf(if (email == null || accessToken == null) AppScreen.LOGIN else AppScreen.HOME)
+        }
         var activeSession by rememberSaveable { mutableStateOf<String?>(null) }
         var message by rememberSaveable { mutableStateOf<String?>(null) }
         var isScreenSharing by rememberSaveable { mutableStateOf(false) }
@@ -111,6 +118,12 @@ class MainActivity : ComponentActivity() {
             mutableStateOf(getPreferences(MODE_PRIVATE).getBoolean("notifications", true))
         }
         var registrationStatus by rememberSaveable { mutableStateOf("Belum didaftarkan ke server") }
+        var authBusy by rememberSaveable { mutableStateOf(false) }
+        var authError by rememberSaveable { mutableStateOf<String?>(null) }
+        var submittingTask by rememberSaveable { mutableStateOf(false) }
+        var submittedTaskId by rememberSaveable { mutableStateOf<String?>(null) }
+        var pendingIncomingSession by remember { mutableStateOf<IncomingSession?>(null) }
+        var adminTasks by remember { mutableStateOf<List<BackendTaskSummary>>(emptyList()) }
         val registrationScope = rememberCoroutineScope()
         val currentDeviceId = remember { getOrCreateDeviceId() }
         var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
@@ -120,15 +133,15 @@ class MainActivity : ComponentActivity() {
         val activeRemoteSession by sessionCoordinator.session.collectAsState()
         val registerCurrentDevice: () -> Unit = {
             val registeredEmail = email
-            if (registeredEmail.isNullOrBlank()) {
-                registrationStatus = "Masuk terlebih dahulu untuk mendaftarkan device."
+            if (registeredEmail.isNullOrBlank() || accessToken.isNullOrBlank()) {
+                registrationStatus = "Login server diperlukan untuk mendaftarkan device."
             } else {
                 registrationStatus = "Sedang mendaftarkan device ke server..."
                 registrationScope.launch {
                     runCatching {
-                        DeviceRegistrationClient.register(
+                        BackendApiClient.registerDevice(
                             baseUrl = BuildConfig.BACKEND_BASE_URL,
-                            email = registeredEmail,
+                            accessToken = accessToken.orEmpty(),
                             deviceId = currentDeviceId,
                             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
                             androidVersion = Build.VERSION.RELEASE.orEmpty(),
@@ -142,8 +155,39 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        LaunchedEffect(email, currentDeviceId) {
-            if (!email.isNullOrBlank()) registerCurrentDevice()
+        val loadAdminTasks: () -> Unit = {
+            if (role == UserRole.ADMIN && !accessToken.isNullOrBlank()) {
+                registrationScope.launch {
+                    runCatching {
+                        BackendApiClient.listTasks(
+                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                            accessToken = accessToken.orEmpty(),
+                        )
+                    }.onSuccess { adminTasks = it }
+                        .onFailure { message = "Data tugas gagal dimuat: ${it.message ?: "server tidak dapat dihubungi"}" }
+                }
+            }
+        }
+        LaunchedEffect(email, currentDeviceId, accessToken) {
+            if (!email.isNullOrBlank() && !accessToken.isNullOrBlank()) registerCurrentDevice()
+        }
+        LaunchedEffect(currentDeviceId, accessToken) {
+            val token = accessToken
+            if (!token.isNullOrBlank()) {
+                while (isActive) {
+                    runCatching {
+                        BackendApiClient.heartbeat(
+                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                            accessToken = token,
+                            deviceId = currentDeviceId,
+                        )
+                    }
+                    delay(30_000)
+                }
+            }
+        }
+        LaunchedEffect(role, accessToken, screen) {
+            if (role == UserRole.ADMIN && screen == AppScreen.HOME) loadAdminTasks()
         }
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
@@ -154,6 +198,50 @@ class MainActivity : ComponentActivity() {
             }
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+        DisposableEffect(accessToken, currentDeviceId) {
+            val token = accessToken
+            if (token.isNullOrBlank()) {
+                onDispose { }
+            } else {
+                val signaling = SignalingClient(
+                    baseUrl = BuildConfig.BACKEND_BASE_URL,
+                    accessToken = token,
+                    deviceId = currentDeviceId,
+                    listener = object : SignalingClient.Listener {
+                        override fun onConnected() {
+                            runOnUiThread { message = "Signaling server tersambung." }
+                        }
+
+                        override fun onSessionRequested(session: IncomingSession) {
+                            runOnUiThread {
+                                pendingIncomingSession = session
+                                message = "Permintaan monitoring baru dari ${session.requesterEmail}."
+                            }
+                        }
+
+                        override fun onSessionEvent(type: String, sessionId: String) {
+                            runOnUiThread {
+                                if (type == "session.approved") {
+                                    message = "Permintaan monitoring disetujui petugas."
+                                } else if (type == "session.rejected") {
+                                    message = "Permintaan monitoring ditolak petugas."
+                                    activeSession = null
+                                } else if (type == "session.ended") {
+                                    message = "Sesi monitoring telah dihentikan."
+                                    activeSession = null
+                                }
+                            }
+                        }
+
+                        override fun onError(messageText: String) {
+                            runOnUiThread { message = "Signaling: $messageText" }
+                        }
+                    },
+                )
+                signaling.connect()
+                onDispose { signaling.close() }
+            }
         }
         val captureLauncher = rememberLauncherForActivityResult(StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK && result.data != null) {
@@ -183,23 +271,41 @@ class MainActivity : ComponentActivity() {
                     message = "Masukkan ID perangkat 9 digit."
                 }
 
+                accessToken.isNullOrBlank() -> {
+                    message = "Login server diperlukan sebelum memulai monitoring."
+                }
+
                 activeRemoteSession != null -> {
                     message = "Akhiri sesi aktif sebelum memulai sesi baru."
                 }
 
                 else -> {
-                    sessionCoordinator.start(
-                        RemoteSession(
-                            sessionId = "local-${System.currentTimeMillis()}",
-                            peerDeviceId = normalized,
-                            role = RemoteSession.Role.CONTROLLER,
-                        ),
-                    )
-                    activeSession = normalized
-                    screen = AppScreen.SESSION
-                    message = "Permintaan sesi dikirim. Menunggu persetujuan penerima."
-                    if (notificationsEnabled) {
-                        showSessionNotification("Menunggu persetujuan perangkat ${formatDeviceId(normalized)}.")
+                    message = "Mengirim permintaan monitoring ke device petugas..."
+                    registrationScope.launch {
+                        runCatching {
+                            BackendApiClient.createSession(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = accessToken.orEmpty(),
+                                controllerDeviceId = currentDeviceId,
+                                receiverDeviceId = normalized,
+                            )
+                        }.onSuccess { remoteSession ->
+                            sessionCoordinator.start(
+                                RemoteSession(
+                                    sessionId = remoteSession.id,
+                                    peerDeviceId = normalized,
+                                    role = RemoteSession.Role.CONTROLLER,
+                                ),
+                            )
+                            activeSession = normalized
+                            screen = AppScreen.SESSION
+                            message = "Permintaan sesi dikirim. Menunggu persetujuan petugas."
+                            if (notificationsEnabled) {
+                                showSessionNotification("Menunggu persetujuan perangkat ${formatDeviceId(normalized)}.")
+                            }
+                        }.onFailure { error ->
+                            message = "Monitoring gagal: ${error.message ?: "server tidak dapat dihubungi"}"
+                        }
                     }
                 }
             }
@@ -207,14 +313,45 @@ class MainActivity : ComponentActivity() {
 
         if (screen == AppScreen.LOGIN) {
             LoginScreen(
-                onLogin = { enteredEmail, selectedRole ->
-                    getPreferences(MODE_PRIVATE).edit()
-                        .putString("email", enteredEmail)
-                        .putString("role", selectedRole.name)
-                        .apply()
-                    email = enteredEmail
-                    role = selectedRole
-                    screen = AppScreen.HOME
+                isLoading = authBusy,
+                serverError = authError,
+                onLogin = { enteredEmail, password, selectedRole, isRegistering, adminInviteCode ->
+                    authBusy = true
+                    authError = null
+                    registrationScope.launch {
+                        runCatching {
+                            if (isRegistering) {
+                                BackendApiClient.register(
+                                    baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                    email = enteredEmail,
+                                    password = password,
+                                    role = selectedRole,
+                                    adminInviteCode = adminInviteCode,
+                                )
+                            } else {
+                                BackendApiClient.login(
+                                    baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                    email = enteredEmail,
+                                    password = password,
+                                )
+                            }
+                        }.onSuccess { result ->
+                            getPreferences(MODE_PRIVATE).edit()
+                                .putString("email", result.email)
+                                .putString("role", result.role.name)
+                                .putString("access_token", result.accessToken)
+                                .putString("refresh_token", result.refreshToken)
+                                .apply()
+                            email = result.email
+                            role = result.role
+                            accessToken = result.accessToken
+                            authBusy = false
+                            screen = AppScreen.HOME
+                        }.onFailure { error ->
+                            authBusy = false
+                            authError = error.message ?: "Autentikasi ke server gagal."
+                        }
+                    }
                 },
             )
             return
@@ -256,7 +393,9 @@ class MainActivity : ComponentActivity() {
                         email = email.orEmpty(),
                         activeSession = activeSession,
                         message = message,
+                        tasks = adminTasks,
                         onConnect = startRemoteSession,
+                        onRefreshTasks = loadAdminTasks,
                         modifier = Modifier.padding(padding),
                     )
                 } else {
@@ -264,9 +403,57 @@ class MainActivity : ComponentActivity() {
                         email = email.orEmpty(),
                         deviceId = currentDeviceId,
                         submittedCustomer = submittedCustomer,
+                        activeSession = activeSession,
+                        pendingSession = pendingIncomingSession,
                         onStartForm = { screen = AppScreen.CUSTOMER_FORM },
                         onContinue = { screen = AppScreen.PLN_MOBILE },
                         onShareId = { shareDeviceId(currentDeviceId) },
+                        onApproveSession = { incoming ->
+                            val token = accessToken
+                            if (!token.isNullOrBlank()) {
+                                registrationScope.launch {
+                                    runCatching {
+                                        BackendApiClient.approveSession(
+                                            BuildConfig.BACKEND_BASE_URL,
+                                            token,
+                                            incoming.sessionId,
+                                        )
+                                    }.onSuccess {
+                                        pendingIncomingSession = null
+                                        sessionCoordinator.start(
+                                            RemoteSession(
+                                                sessionId = incoming.sessionId,
+                                                peerDeviceId = incoming.controllerDeviceId,
+                                                role = RemoteSession.Role.RECEIVER,
+                                            ),
+                                        )
+                                        activeSession = incoming.controllerDeviceId
+                                        message = "Monitoring disetujui. Menunggu koneksi media."
+                                    }.onFailure { error ->
+                                        message = "Persetujuan gagal: ${error.message ?: "server tidak dapat dihubungi"}"
+                                    }
+                                }
+                            }
+                        },
+                        onRejectSession = { incoming ->
+                            val token = accessToken
+                            if (!token.isNullOrBlank()) {
+                                registrationScope.launch {
+                                    runCatching {
+                                        BackendApiClient.rejectSession(
+                                            BuildConfig.BACKEND_BASE_URL,
+                                            token,
+                                            incoming.sessionId,
+                                        )
+                                    }.onSuccess {
+                                        pendingIncomingSession = null
+                                        message = "Permintaan monitoring ditolak."
+                                    }.onFailure { error ->
+                                        message = "Penolakan gagal: ${error.message ?: "server tidak dapat dihubungi"}"
+                                    }
+                                }
+                            }
+                        },
                         modifier = Modifier.padding(padding),
                     )
                 }
@@ -275,12 +462,41 @@ class MainActivity : ComponentActivity() {
                     initialData = submittedCustomer,
                     onBack = { screen = AppScreen.HOME },
                     onSubmit = {
-                        submittedCustomer = it
-                        getPreferences(MODE_PRIVATE).edit()
-                            .putBoolean("customer_form_saved", true)
-                            .apply()
-                        screen = AppScreen.PLN_MOBILE
+                        if (accessToken.isNullOrBlank()) {
+                            message = "Login server diperlukan sebelum menyimpan data pelanggan."
+                        } else {
+                            submittingTask = true
+                            message = "Menyimpan data pelanggan ke server..."
+                            registrationScope.launch {
+                                runCatching {
+                                    BackendApiClient.createCustomerTask(
+                                        baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                        accessToken = accessToken.orEmpty(),
+                                        workerDeviceId = currentDeviceId,
+                                        customer = it,
+                                    )
+                                }.onSuccess { taskId ->
+                                    submittedCustomer = it
+                                    submittedTaskId = taskId
+                                    runCatching {
+                                        BackendApiClient.updateTaskStatus(
+                                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                            accessToken = accessToken.orEmpty(),
+                                            taskId = taskId,
+                                            status = "PLN_MOBILE",
+                                        )
+                                    }
+                                    submittingTask = false
+                                    message = "Data pelanggan tersimpan dan dikirim ke server."
+                                    screen = AppScreen.PLN_MOBILE
+                                }.onFailure { error ->
+                                    submittingTask = false
+                                    message = "Data belum tersimpan: ${error.message ?: "server tidak dapat dihubungi"}"
+                                }
+                            }
+                        }
                     },
+                    isSubmitting = submittingTask,
                     modifier = Modifier.padding(padding),
                 )
 
@@ -330,6 +546,18 @@ class MainActivity : ComponentActivity() {
                         message = "Berbagi layar dihentikan."
                     },
                     onStop = {
+                            val serverSessionId = activeRemoteSession?.sessionId
+                            if (!serverSessionId.isNullOrBlank() && !accessToken.isNullOrBlank()) {
+                                registrationScope.launch {
+                                    runCatching {
+                                        BackendApiClient.endSession(
+                                            BuildConfig.BACKEND_BASE_URL,
+                                            accessToken.orEmpty(),
+                                            serverSessionId,
+                                        )
+                                    }
+                                }
+                            }
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         sessionCoordinator.stop()
                         cancelSessionNotification()
@@ -379,11 +607,18 @@ class MainActivity : ComponentActivity() {
                         getPreferences(MODE_PRIVATE).edit()
                             .remove("email")
                             .remove("role")
+                            .remove("access_token")
+                            .remove("refresh_token")
                             .apply()
                         email = null
+                        accessToken = null
                         role = UserRole.ADMIN
                         activeSession = null
                         submittedCustomer = null
+                        submittedTaskId = null
+                        submittingTask = false
+                        pendingIncomingSession = null
+                        adminTasks = emptyList()
                         message = null
                         registrationStatus = "Belum didaftarkan ke server"
                         screen = AppScreen.LOGIN
@@ -486,11 +721,11 @@ class MainActivity : ComponentActivity() {
 
 private enum class AppScreen { LOGIN, HOME, CUSTOMER_FORM, PLN_MOBILE, DEVICES, SESSION, SETTINGS }
 
-private enum class UserRole { ADMIN, WORKER }
+enum class UserRole { ADMIN, WORKER }
 
 private data class Device(val id: String, val name: String, val platform: String, val online: Boolean)
 
-private data class CustomerData(
+data class CustomerData(
     val fullName: String,
     val meterId: String,
     val address: String,
@@ -529,11 +764,17 @@ private fun LinkDroidTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun LoginScreen(onLogin: (String, UserRole) -> Unit) {
+private fun LoginScreen(
+    isLoading: Boolean,
+    serverError: String?,
+    onLogin: (String, String, UserRole, Boolean, String?) -> Unit,
+) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedRole by rememberSaveable { mutableStateOf(UserRole.ADMIN) }
+    var isRegistering by rememberSaveable { mutableStateOf(false) }
+    var adminInviteCode by rememberSaveable { mutableStateOf("") }
 
     Surface(color = LinkDroidColors.background, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -558,8 +799,16 @@ private fun LoginScreen(onLogin: (String, UserRole) -> Unit) {
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text("Selamat datang kembali", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Masuk untuk mengakses perangkat Android Anda.", color = LinkDroidColors.muted)
+                     Text(
+                         if (isRegistering) "Buat akun LinkDroid" else "Masuk ke LinkDroid",
+                         style = MaterialTheme.typography.titleLarge,
+                         fontWeight = FontWeight.Bold,
+                     )
+                     Text(
+                         if (isRegistering) "Buat akun server untuk mulai menggunakan aplikasi."
+                         else "Masuk untuk mengakses perangkat Android Anda.",
+                         color = LinkDroidColors.muted,
+                     )
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it; error = null },
@@ -590,22 +839,53 @@ private fun LoginScreen(onLogin: (String, UserRole) -> Unit) {
                              Text(if (selectedRole == UserRole.WORKER) "✓ Petugas" else "Petugas")
                          }
                      }
-                    if (error != null) Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                     if (isRegistering && selectedRole == UserRole.ADMIN) {
+                         OutlinedTextField(
+                             value = adminInviteCode,
+                             onValueChange = { adminInviteCode = it; error = null },
+                             label = { Text("Kode undangan Admin") },
+                             singleLine = true,
+                             modifier = Modifier.fillMaxWidth(),
+                         )
+                     }
+                     if (error != null) Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                     if (serverError != null) Text(serverError, color = MaterialTheme.colorScheme.error)
                     Button(
                         onClick = {
-                             if (email.contains("@") && password.length >= 6) onLogin(email.trim(), selectedRole)
-                            else error = "Masukkan email valid dan kata sandi minimal 6 karakter."
+                             if (email.contains("@") && password.length >= 8) {
+                                 onLogin(
+                                     email.trim(),
+                                     password,
+                                     selectedRole,
+                                     isRegistering,
+                                     adminInviteCode.takeIf { isRegistering && selectedRole == UserRole.ADMIN },
+                                 )
+                             } else {
+                                 error = "Masukkan email valid dan kata sandi minimal 8 karakter."
+                             }
                         },
+                         enabled = !isLoading,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Masuk") }
+                     ) { Text(if (isLoading) "Menghubungkan..." else if (isRegistering) "Daftar" else "Masuk") }
                     OutlinedButton(
                         onClick = {
                             email = "demo@linkdroid.app"
                             password = "linkdroid"
-                             onLogin(email, selectedRole)
+                             error = null
                         },
+                         enabled = !isLoading,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Coba demo") }
+                     ) { Text("Isi akun contoh") }
+                     TextButton(
+                         onClick = {
+                             isRegistering = !isRegistering
+                             error = null
+                         },
+                         enabled = !isLoading,
+                         modifier = Modifier.fillMaxWidth(),
+                     ) {
+                         Text(if (isRegistering) "Sudah punya akun? Masuk" else "Belum punya akun? Daftar")
+                     }
                 }
             }
         }
@@ -617,7 +897,9 @@ private fun AdminDashboardScreen(
     email: String,
     activeSession: String?,
     message: String?,
+    tasks: List<BackendTaskSummary>,
     onConnect: (String) -> Unit,
+    onRefreshTasks: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var workerDeviceId by rememberSaveable { mutableStateOf("") }
@@ -668,6 +950,32 @@ private fun AdminDashboardScreen(
                 }
             }
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionTitle("Data pelanggan masuk")
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onRefreshTasks) { Text("Muat ulang") }
+        }
+        if (tasks.isEmpty()) {
+            Text("Belum ada data pelanggan yang dikirim petugas.", color = LinkDroidColors.muted)
+        } else {
+            tasks.forEach { task ->
+                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(task.fullName, fontWeight = FontWeight.Bold)
+                        Text("IDPEL ${task.meterId}", color = LinkDroidColors.muted)
+                        Text("${task.city}, ${task.province}", color = LinkDroidColors.muted)
+                        Text(
+                            task.status.replace("_", " "),
+                            color = if (task.status == "COMPLETED") LinkDroidColors.success else LinkDroidColors.primary,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+        }
         SectionTitle("Alur kerja")
         WorkflowStep("1", "Hubungkan device", "Masukkan ID device petugas.")
         WorkflowStep("2", "Petugas mengisi data", "Data pelanggan diisi langsung di perangkat petugas.")
@@ -703,9 +1011,13 @@ private fun WorkerHomeScreen(
     email: String,
     deviceId: String,
     submittedCustomer: CustomerData?,
+    activeSession: String?,
+    pendingSession: IncomingSession?,
     onStartForm: () -> Unit,
     onContinue: () -> Unit,
     onShareId: () -> Unit,
+    onApproveSession: (IncomingSession) -> Unit,
+    onRejectSession: (IncomingSession) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Page(modifier) {
@@ -723,6 +1035,34 @@ private fun WorkerHomeScreen(
                 Text("Berikan ID ini kepada admin untuk dipantau.", color = Color.White.copy(alpha = .85f))
                 OutlinedButton(onClick = onShareId, modifier = Modifier.fillMaxWidth()) {
                     Text("Bagikan ID", color = Color.White)
+                }
+            }
+        }
+        if (pendingSession != null) {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4D6))) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Permintaan monitoring", fontWeight = FontWeight.Bold)
+                    Text("Admin ${pendingSession.requesterEmail} ingin memantau device ini.")
+                    Text("Device pengendali: ${formatDeviceId(pendingSession.controllerDeviceId)}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onRejectSession(pendingSession) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Tolak") }
+                        Button(
+                            onClick = { onApproveSession(pendingSession) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Setujui") }
+                    }
+                }
+            }
+        }
+        if (activeSession != null) {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF8F1))) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Monitoring aktif", fontWeight = FontWeight.Bold, color = LinkDroidColors.success)
+                    Text("Device Admin: ${formatDeviceId(activeSession)}")
+                    Text("Koneksi video/control menunggu WebRTC media.", color = LinkDroidColors.muted)
                 }
             }
         }
@@ -756,6 +1096,7 @@ private fun CustomerFormScreen(
     initialData: CustomerData?,
     onBack: () -> Unit,
     onSubmit: (CustomerData) -> Unit,
+    isSubmitting: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var fullName by rememberSaveable(initialData) { mutableStateOf(initialData?.fullName.orEmpty()) }
@@ -853,9 +1194,10 @@ private fun CustomerFormScreen(
                         onSubmit(customer)
                     }
                 },
+                enabled = !isSubmitting,
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Simpan & Lanjut")
+                Text(if (isSubmitting) "Menyimpan..." else "Simpan & Lanjut")
             }
         }
     }

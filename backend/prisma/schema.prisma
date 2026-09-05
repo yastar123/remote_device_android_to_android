@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  WORKER
+}
+
+enum SessionStatus {
+  REQUESTED
+  APPROVED
+  ACTIVE
+  REJECTED
+  ENDED
+  EXPIRED
+}
+
+enum TaskStatus {
+  DATA_INPUT
+  PLN_MOBILE
+  IN_REVIEW
+  COMPLETED
+  NEEDS_CORRECTION
+}
+
+model User {
+  id                String          @id @default(uuid())
+  email             String          @unique
+  passwordHash      String
+  role              UserRole        @default(WORKER)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  devices           Device[]
+  refreshTokens     RefreshToken[]
+  requestedSessions RemoteSession[] @relation("sessionRequester")
+  receivedSessions  RemoteSession[] @relation("sessionReceiver")
+  adminTasks        CustomerTask[]  @relation("taskAdmin")
+  workerTasks       CustomerTask[]  @relation("taskWorker")
+  auditLogs         AuditLog[]
+}
+
+model Device {
+  id                String          @id @default(uuid())
+  deviceId          String          @unique
+  userId            String
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  androidVersion    String?
+  appVersion        String?
+  lastSeenAt        DateTime        @default(now())
+  createdAt         DateTime        @default(now())
+  revokedAt         DateTime?
+  requestedSessions RemoteSession[] @relation("sessionControllerDevice")
+  receivedSessions  RemoteSession[] @relation("sessionReceiverDevice")
+  workerTasks       CustomerTask[]  @relation("taskWorkerDevice")
+
+  @@index([userId])
+  @@index([lastSeenAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model RemoteSession {
+  id                 String        @id @default(uuid())
+  requesterId        String
+  receiverId         String
+  controllerDeviceId String
+  receiverDeviceId   String
+  requester          User          @relation("sessionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver           User          @relation("sessionReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  controllerDevice   Device        @relation("sessionControllerDevice", fields: [controllerDeviceId], references: [id], onDelete: Restrict)
+  receiverDevice     Device        @relation("sessionReceiverDevice", fields: [receiverDeviceId], references: [id], onDelete: Restrict)
+  status             SessionStatus @default(REQUESTED)
+  requestedAt        DateTime      @default(now())
+  approvedAt         DateTime?
+  endedAt            DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([requesterId, status])
+  @@index([receiverId, status])
+}
+
+model CustomerTask {
+  id             String     @id @default(uuid())
+  adminId        String?
+  workerId       String
+  workerDeviceId String
+  admin          User?      @relation("taskAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  worker         User       @relation("taskWorker", fields: [workerId], references: [id], onDelete: Cascade)
+  workerDevice   Device     @relation("taskWorkerDevice", fields: [workerDeviceId], references: [id], onDelete: Restrict)
+  fullName       String
+  meterId        String
+  address        String
+  village        String
+  district       String
+  city           String
+  province       String
+  status         TaskStatus @default(DATA_INPUT)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  completedAt    DateTime?
+
+  @@index([workerId, status])
+  @@index([adminId, status])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+}
