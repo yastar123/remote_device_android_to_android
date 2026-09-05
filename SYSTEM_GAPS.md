@@ -242,12 +242,16 @@ exponential backoff sampai 30 detik.
 
 - register/login;
 - register device;
+- mengambil daftar device dari backend dan menghitung status online dari
+  `lastSeenAt`;
 - heartbeat setiap 30 detik selama token ada;
 - membuat session;
 - approve/reject/end session;
 - membuat task pelanggan;
 - mengubah status task;
-- mengambil daftar task untuk Admin.
+- mengambil daftar task untuk Admin;
+- mengambil audit log terbaru untuk dashboard Admin;
+- mengambil konfigurasi ICE server dari backend jika tersedia.
 
 `SignalingClient` membuat koneksi WebSocket dan menangani:
 
@@ -270,7 +274,8 @@ tetapi ketergantungan fallback dan keberhasilan runtime tetap perlu diuji.
 
 Ada file `DeviceRegistrationClient.kt` yang mengirim payload lama tanpa header
 Bearer dan tidak dipakai oleh alur utama `MainActivity`. Kontrak yang dipakai
-alur utama adalah `BackendApiClient`.
+alur utama adalah `BackendApiClient`. Endpoint audit log juga sudah memiliki
+client Android dan ditampilkan sebagai aktivitas terbaru pada dashboard Admin.
 
 ## 6. Gap fungsional yang nyata
 
