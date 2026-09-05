@@ -46,6 +46,12 @@ data class BackendTaskSummary(
     val status: String,
 )
 
+data class BackendIceServer(
+    val urls: List<String>,
+    val username: String?,
+    val credential: String?,
+)
+
 object BackendApiClient {
     suspend fun login(baseUrl: String, email: String, password: String): BackendAuthResult =
         authenticate(baseUrl, "/api/v1/auth/login", email, password, null)
@@ -162,6 +168,32 @@ object BackendApiClient {
                         status = task.getString("status"),
                     ),
                 )
+            }
+        }
+    }
+
+    suspend fun listIceServers(baseUrl: String, accessToken: String): List<BackendIceServer> {
+        val response = request(baseUrl, "/api/v1/turn/credentials", "GET", accessToken)
+        val servers = response.optJSONArray("iceServers") ?: return emptyList()
+        return buildList {
+            for (index in 0 until servers.length()) {
+                val server = servers.getJSONObject(index)
+                val urls = when (val rawUrls = server.opt("urls")) {
+                    is JSONArray -> buildList {
+                        for (urlIndex in 0 until rawUrls.length()) add(rawUrls.getString(urlIndex))
+                    }
+                    is String -> listOf(rawUrls)
+                    else -> emptyList()
+                }
+                if (urls.isNotEmpty()) {
+                    add(
+                        BackendIceServer(
+                            urls = urls,
+                            username = server.optString("username").takeIf { it.isNotBlank() },
+                            credential = server.optString("credential").takeIf { it.isNotBlank() },
+                        ),
+                    )
+                }
             }
         }
     }

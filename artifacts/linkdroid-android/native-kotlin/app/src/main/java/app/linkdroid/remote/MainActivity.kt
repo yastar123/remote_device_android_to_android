@@ -69,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -157,12 +158,30 @@ class MainActivity : ComponentActivity() {
         }
         val activeRemoteSession by sessionCoordinator.session.collectAsState()
         var sendRemoteCommand by remember { mutableStateOf<((RemoteCommand) -> Boolean)?>(null) }
+        var projectionPermission by remember { mutableStateOf<Intent?>(null) }
+        var backendIceServers by remember { mutableStateOf<List<BackendIceServer>>(emptyList()) }
+        var webRtcSessionManager by remember { mutableStateOf<WebRtcSessionManager?>(null) }
         LaunchedEffect(activeRemoteSession?.sessionId) {
             val restoredSession = activeRemoteSession
             if (restoredSession != null && screen == AppScreen.HOME) {
                 activeSession = restoredSession.peerDeviceId
                 screen = AppScreen.SESSION
                 message = "Sesi sebelumnya dipulihkan. Verifikasi status sesi dengan server."
+            }
+        }
+        LaunchedEffect(accessToken, refreshToken) {
+            if (!accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()) {
+                runCatching {
+                    withAuthenticatedApi { token ->
+                        BackendApiClient.listIceServers(
+                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                            accessToken = token,
+                        )
+                    }
+                }.onSuccess { backendIceServers = it }
+                    .onFailure { backendIceServers = emptyList() }
+            } else {
+                backendIceServers = emptyList()
             }
         }
         val registerCurrentDevice: () -> Unit = {
@@ -239,17 +258,52 @@ class MainActivity : ComponentActivity() {
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
-        DisposableEffect(accessToken, currentDeviceId, activeRemoteSession?.sessionId) {
+        DisposableEffect(
+            accessToken,
+            currentDeviceId,
+            activeRemoteSession?.sessionId,
+            projectionPermission,
+            backendIceServers,
+        ) {
             val token = accessToken
-            if (token.isNullOrBlank()) {
+            val currentSession = activeRemoteSession
+            if (token.isNullOrBlank() || currentSession == null) {
                 onDispose { }
             } else {
+                lateinit var webRtc: WebRtcSessionManager
                 lateinit var signaling: SignalingClient
+                webRtc = WebRtcSessionManager(
+                    context = this@MainActivity,
+                    sessionId = currentSession.sessionId,
+                    role = currentSession.role,
+                    projectionPermission = projectionPermission.takeIf {
+                        currentSession.role == RemoteSession.Role.RECEIVER
+                    },
+                    backendIceServers = backendIceServers,
+                    sendSignal = { signalType, payload ->
+                        signaling.sendSignal(currentSession.sessionId, signalType, payload)
+                    },
+                    onStateChanged = { state ->
+                        runOnUiThread { message = "Media: $state" }
+                    },
+                    onRemoteVideoTrack = {
+                        runOnUiThread { message = "Media: video track tersedia." }
+                    },
+                    onCommandResult = { _, ok, error ->
+                        runOnUiThread {
+                            message = if (ok) {
+                                "Perintah WebRTC berhasil dijalankan."
+                            } else {
+                                "Perintah WebRTC gagal: ${error ?: "receiver menolak perintah"}"
+                            }
+                        }
+                    },
+                )
                 signaling = SignalingClient(
                     baseUrl = BuildConfig.BACKEND_BASE_URL,
                     accessToken = token,
                     deviceId = currentDeviceId,
-                    sessionId = activeRemoteSession?.sessionId,
+                    sessionId = currentSession.sessionId,
                     listener = object : SignalingClient.Listener {
                         override fun onConnected() {
                             runOnUiThread { message = "Signaling server tersambung." }
@@ -266,6 +320,7 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread {
                                 if (type == "session.approved" || type == "session.active") {
                                     message = "Permintaan monitoring disetujui petugas."
+                                    webRtc.beginNegotiation()
                                 } else if (type == "session.rejected") {
                                     message = "Permintaan monitoring ditolak petugas."
                                     activeSession = null
@@ -274,6 +329,17 @@ class MainActivity : ComponentActivity() {
                                     activeSession = null
                                     sessionCoordinator.stop()
                                 }
+                            }
+                        }
+
+                        override fun onSessionSignal(
+                            sessionId: String,
+                            fromDeviceId: String,
+                            signalType: String,
+                            payload: org.json.JSONObject,
+                        ) {
+                            if (sessionId == currentSession.sessionId) {
+                                webRtc.handleSignal(signalType, payload)
                             }
                         }
 
@@ -309,17 +375,25 @@ class MainActivity : ComponentActivity() {
                     },
                 )
                 sendRemoteCommand = { command ->
-                    val session = activeRemoteSession
-                    session != null && session.role == RemoteSession.Role.CONTROLLER &&
-                        signaling.sendCommand(
-                            sessionId = session.sessionId,
-                            commandId = java.util.UUID.randomUUID().toString(),
-                            command = command,
-                        )
+                    if (currentSession.role != RemoteSession.Role.CONTROLLER) {
+                        false
+                    } else {
+                        val commandId = java.util.UUID.randomUUID().toString()
+                        webRtc.sendCommand(commandId, command) ||
+                            signaling.sendCommand(
+                                sessionId = currentSession.sessionId,
+                                commandId = commandId,
+                                command = command,
+                            )
+                    }
                 }
+                webRtcSessionManager = webRtc
+                webRtc.start()
                 signaling.connect()
                 onDispose {
                     sendRemoteCommand = null
+                    webRtc.stop()
+                    webRtcSessionManager = null
                     signaling.close()
                 }
             }
@@ -329,8 +403,13 @@ class MainActivity : ComponentActivity() {
                 val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
                     putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                     putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+                    putExtra(
+                        ScreenCaptureService.EXTRA_WEBRTC_CAPTURE,
+                        activeRemoteSession?.role == RemoteSession.Role.RECEIVER,
+                    )
                 }
                 ContextCompat.startForegroundService(this, serviceIntent)
+                projectionPermission = result.data
                 isScreenSharing = true
                 message = "Berbagi layar aktif dan menunggu koneksi."
             } else {
@@ -598,6 +677,7 @@ class MainActivity : ComponentActivity() {
                     onBack = { screen = AppScreen.HOME },
                     onShareScreen = requestScreenShare,
                     onStopSharing = {
+                        webRtcSessionManager?.stopScreenCapture()
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         isScreenSharing = false
                         message = "Pemantauan layar dihentikan."
@@ -629,10 +709,12 @@ class MainActivity : ComponentActivity() {
                 AppScreen.SESSION -> SessionScreen(
                     deviceId = activeSession.orEmpty(),
                     isController = activeRemoteSession?.role == RemoteSession.Role.CONTROLLER,
+                    webRtcSessionManager = webRtcSessionManager,
                     message = message,
                     isScreenSharing = isScreenSharing,
                     onShareScreen = requestScreenShare,
                     onStopSharing = {
+                        webRtcSessionManager?.stopScreenCapture()
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         isScreenSharing = false
                         message = "Berbagi layar dihentikan."
@@ -652,6 +734,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                        webRtcSessionManager?.stopScreenCapture()
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         sessionCoordinator.stop()
                         cancelSessionNotification()
@@ -694,6 +777,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onScreenShare = requestScreenShare,
                     onStopSharing = {
+                        webRtcSessionManager?.stopScreenCapture()
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         isScreenSharing = false
                         message = "Berbagi layar dihentikan."
@@ -707,6 +791,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        webRtcSessionManager?.stopScreenCapture()
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         sessionCoordinator.stop()
                         cancelSessionNotification()
@@ -1492,6 +1577,7 @@ private fun DevicesScreen(
 private fun SessionScreen(
     deviceId: String,
     isController: Boolean,
+    webRtcSessionManager: WebRtcSessionManager?,
     message: String?,
     isScreenSharing: Boolean,
     onShareScreen: () -> Unit,
@@ -1517,6 +1603,20 @@ private fun SessionScreen(
                 HorizontalDivider()
                 Text("Layar dan kontrol sentuhan hanya aktif setelah penerima menyetujui sesi.", color = LinkDroidColors.muted)
                 if (message != null) Notice(message)
+                if (isController && webRtcSessionManager != null) {
+                    Text("Video perangkat penerima", fontWeight = FontWeight.Bold)
+                    AndroidView(
+                        factory = { context ->
+                            org.webrtc.SurfaceViewRenderer(context).also {
+                                webRtcSessionManager.attachRenderer(it)
+                            }
+                        },
+                        update = { webRtcSessionManager.attachRenderer(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp),
+                    )
+                }
                 SettingRow(
                     "Berbagi layar",
                     if (isScreenSharing) "MediaProjection aktif di perangkat ini" else "Belum dimulai",

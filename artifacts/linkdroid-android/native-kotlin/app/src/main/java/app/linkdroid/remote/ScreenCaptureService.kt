@@ -21,6 +21,7 @@ class ScreenCaptureService : Service() {
     companion object {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
+        const val EXTRA_WEBRTC_CAPTURE = "webrtc_capture"
         private const val CHANNEL_ID = "linkdroid-session"
         private const val NOTIFICATION_ID = 1001
     }
@@ -47,15 +48,8 @@ class ScreenCaptureService : Service() {
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         if (resultCode != Activity.RESULT_OK) return START_NOT_STICKY
         val resultData = intent?.parcelableIntent(EXTRA_RESULT_DATA) ?: return START_NOT_STICKY
+        val webRtcCapture = intent.getBooleanExtra(EXTRA_WEBRTC_CAPTURE, false)
         releaseCapture()
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        projection = manager.getMediaProjection(resultCode, resultData) ?: return START_NOT_STICKY
-        projectionCallback = object : MediaProjection.Callback() {
-            override fun onStop() {
-                stopSelf()
-            }
-        }
-        projection?.registerCallback(projectionCallback!!, imageHandler)
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(
                 NOTIFICATION_ID,
@@ -65,6 +59,20 @@ class ScreenCaptureService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, sessionNotification())
         }
+        if (webRtcCapture) {
+            // WebRtcSessionManager owns MediaProjection and the video track. This
+            // service remains alive only to satisfy the foreground-service
+            // requirement while the capture is active.
+            return START_STICKY
+        }
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        projection = manager.getMediaProjection(resultCode, resultData) ?: return START_NOT_STICKY
+        projectionCallback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                stopSelf()
+            }
+        }
+        projection?.registerCallback(projectionCallback!!, imageHandler)
         startVirtualDisplay()
         return START_STICKY
     }

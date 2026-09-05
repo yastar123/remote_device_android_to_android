@@ -56,7 +56,7 @@ type Client = { socket: WebSocket; user: AuthUser; deviceId: string };
 
 export class SignalingHub {
   private readonly clients = new Map<string, Set<Client>>();
-  private readonly commandTimeouts = new Map<string, NodeJS.Timeout>();
+  private readonly commandTimeouts = new Map<string, { sessionId: string; timeout: NodeJS.Timeout }>();
 
   attach(socket: WebSocket, user: AuthUser, deviceId: string) {
     const client = { socket, user, deviceId };
@@ -153,20 +153,25 @@ export class SignalingHub {
         command: message.command,
         fromDeviceId: client.deviceId,
       });
-      const previousTimeout = this.commandTimeouts.get(message.commandId);
-      if (previousTimeout) clearTimeout(previousTimeout);
+      if (this.commandTimeouts.has(message.commandId)) {
+        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_IN_FLIGHT" }));
+        return;
+      }
+      const timeout = setTimeout(() => {
+        const pending = this.commandTimeouts.get(message.commandId);
+        if (!pending || pending.sessionId !== session.id) return;
+        this.commandTimeouts.delete(message.commandId);
+        this.emitToDevice(session.requesterId, session.controllerDeviceId, {
+          type: "session.command.result",
+          sessionId: session.id,
+          commandId: message.commandId,
+          ok: false,
+          error: "COMMAND_TIMEOUT",
+        });
+      }, 15_000);
       this.commandTimeouts.set(
         message.commandId,
-        setTimeout(() => {
-          this.commandTimeouts.delete(message.commandId);
-          this.emitToDevice(session.requesterId, session.controllerDeviceId, {
-            type: "session.command.result",
-            sessionId: session.id,
-            commandId: message.commandId,
-            ok: false,
-            error: "COMMAND_TIMEOUT",
-          });
-        }, 15_000),
+        { sessionId: session.id, timeout },
       );
       return;
     }
@@ -176,8 +181,12 @@ export class SignalingHub {
         client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_RESULT_FORBIDDEN" }));
         return;
       }
-      const timeout = this.commandTimeouts.get(message.commandId);
-      if (timeout) clearTimeout(timeout);
+      const pending = this.commandTimeouts.get(message.commandId);
+      if (!pending || pending.sessionId !== session.id) {
+        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_NOT_FOUND" }));
+        return;
+      }
+      clearTimeout(pending.timeout);
       this.commandTimeouts.delete(message.commandId);
       this.emitToDevice(session.requesterId, session.controllerDeviceId, {
         type: "session.command.result",
@@ -191,7 +200,8 @@ export class SignalingHub {
     }
 
     const targetUserId = isController ? session.receiverId : session.requesterId;
-    this.emitToUser(targetUserId, {
+    const targetDeviceId = isController ? session.receiverDeviceId : session.controllerDeviceId;
+    this.emitToDevice(targetUserId, targetDeviceId, {
       type: "session.signal",
       sessionId: session.id,
       fromDeviceId: client.deviceId,

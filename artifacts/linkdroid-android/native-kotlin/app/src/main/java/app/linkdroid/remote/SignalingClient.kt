@@ -29,6 +29,7 @@ class SignalingClient(
         fun onConnected()
         fun onSessionRequested(session: IncomingSession)
         fun onSessionEvent(type: String, sessionId: String)
+        fun onSessionSignal(sessionId: String, fromDeviceId: String, signalType: String, payload: JSONObject) {}
         fun onRemoteCommand(sessionId: String, commandId: String, command: RemoteCommand) {}
         fun onRemoteCommandResult(sessionId: String, commandId: String, ok: Boolean, error: String?) {}
         fun onError(message: String)
@@ -202,6 +203,14 @@ class SignalingClient(
                             command = command,
                         )
                     }
+                }
+                "session.signal" -> {
+                    listener.onSessionSignal(
+                        sessionId = message.getString("sessionId"),
+                        fromDeviceId = message.optString("fromDeviceId"),
+                        signalType = message.getString("signalType"),
+                        payload = message.optJSONObject("payload") ?: JSONObject(),
+                    )
                 }
                 "session.command.result" -> {
                     listener.onRemoteCommandResult(
