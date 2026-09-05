@@ -44,6 +44,8 @@ Authorization: Bearer <accessToken>
 
 Password minimal 8 karakter. Access token berumur pendek dan refresh token
 disimpan sebagai hash di database serta dirotasi setiap kali digunakan.
+Android menyimpan token terenkripsi menggunakan Android Keystore dan mencoba
+refresh otomatis ketika request authenticated menerima HTTP 401.
 
 ### Device
 
@@ -61,6 +63,11 @@ disimpan sebagai hash di database serta dirotasi setiap kali digunakan.
 - `POST /api/v1/sessions/:id/approve` — hanya akun Petugas penerima.
 - `POST /api/v1/sessions/:id/reject` — hanya akun Petugas penerima.
 - `POST /api/v1/sessions/:id/end` — salah satu pihak.
+
+Session `REQUESTED` dan session yang sudah disetujui tetapi idle akan diubah
+menjadi `EXPIRED` oleh scheduler backend. Koneksi WebSocket pada session yang
+disetujui mengaktifkan status menjadi `ACTIVE`; pesan `session.ping` menjaga
+aktivitas session.
 
 ### Data pelanggan
 

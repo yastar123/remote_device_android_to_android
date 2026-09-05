@@ -92,6 +92,48 @@ function requestAuth(request: Request) {
   return (request as AuthenticatedRequest).auth!;
 }
 
+let sessionExpirySchemaWarningShown = false;
+
+function reportSessionExpiryError(error: unknown) {
+  if ((error as { code?: string })?.code === "P2021") {
+    if (sessionExpirySchemaWarningShown) return;
+    sessionExpirySchemaWarningShown = true;
+    console.warn("Session expiry sweep is waiting for Prisma migrations to create RemoteSession.");
+    return;
+  }
+  console.error("Session expiry sweep failed", error);
+}
+
+async function expireStaleSessions() {
+  const now = new Date();
+  const requestCutoff = new Date(now.getTime() - config.SESSION_REQUEST_TIMEOUT_MINUTES * 60_000);
+  const idleCutoff = new Date(now.getTime() - config.SESSION_IDLE_TIMEOUT_MINUTES * 60_000);
+  const staleSessions = await prisma.remoteSession.findMany({
+    where: {
+      OR: [
+        { status: "REQUESTED", requestedAt: { lt: requestCutoff } },
+        { status: "APPROVED", approvedAt: { lt: idleCutoff } },
+        { status: "ACTIVE", updatedAt: { lt: idleCutoff } },
+      ],
+    },
+    select: { id: true, status: true, requesterId: true, receiverId: true },
+  });
+
+  for (const session of staleSessions) {
+    const result = await prisma.remoteSession.updateMany({
+      where: { id: session.id, status: session.status },
+      data: { status: "EXPIRED", endedAt: now },
+    });
+    if (result.count === 0) continue;
+    await writeAudit(null, "session.expired", "RemoteSession", session.id, {
+      previousStatus: session.status,
+    });
+    const event = { type: "session.expired", sessionId: session.id };
+    hub.emitToUser(session.requesterId, event);
+    hub.emitToUser(session.receiverId, event);
+  }
+}
+
 app.get(
   "/health",
   asyncRoute(async (_request, response) => {
@@ -507,8 +549,15 @@ httpServer.listen(config.PORT, config.HOST, () => {
   console.log(`LinkDroid backend listening on http://${config.HOST}:${config.PORT}`);
 });
 
+const sessionExpiryTimer = setInterval(() => {
+  void expireStaleSessions().catch(reportSessionExpiryError);
+}, 60_000);
+sessionExpiryTimer.unref();
+void expireStaleSessions().catch(reportSessionExpiryError);
+
 async function shutdown(signal: string) {
   console.log(`${signal}: shutting down`);
+  clearInterval(sessionExpiryTimer);
   httpServer.close();
   await disconnectDatabase();
   process.exit(0);

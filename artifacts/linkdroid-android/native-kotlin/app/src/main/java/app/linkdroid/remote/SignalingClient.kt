@@ -7,6 +7,10 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 data class IncomingSession(
     val sessionId: String,
@@ -18,6 +22,7 @@ class SignalingClient(
     baseUrl: String,
     accessToken: String,
     deviceId: String,
+    private val sessionId: String? = null,
     private val listener: Listener,
 ) {
     interface Listener {
@@ -28,6 +33,7 @@ class SignalingClient(
     }
 
     private val client = OkHttpClient()
+    private val reconnectExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val websocketUrl = Uri.parse(baseUrl)
         .buildUpon()
         .scheme(if (baseUrl.startsWith("https")) "wss" else "ws")
@@ -37,12 +43,28 @@ class SignalingClient(
         .build()
         .toString()
     private var socket: WebSocket? = null
+    private var reconnectTask: ScheduledFuture<*>? = null
+    private var pingTask: ScheduledFuture<*>? = null
+    private var reconnectAttempt = 0
+    @Volatile private var closed = false
 
+    @Synchronized
     fun connect() {
+        closed = false
+        openSocket()
+    }
+
+    @Synchronized
+    private fun openSocket() {
+        if (closed) return
+        socket?.cancel()
         socket = client.newWebSocket(
             Request.Builder().url(websocketUrl).build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    reconnectAttempt = 0
+                    reconnectTask?.cancel(false)
+                    startPing()
                     listener.onConnected()
                 }
 
@@ -52,9 +74,45 @@ class SignalingClient(
 
                 override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
                     listener.onError(throwable.message ?: "WebSocket signaling terputus")
+                    scheduleReconnect()
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    stopPing()
+                    scheduleReconnect()
                 }
             },
         )
+    }
+
+    private fun scheduleReconnect() {
+        if (closed || reconnectTask?.isDone == false) return
+        val delaySeconds = minOf(30L, 1L shl minOf(reconnectAttempt, 5))
+        reconnectAttempt += 1
+        reconnectTask = reconnectExecutor.schedule({ openSocket() }, delaySeconds, TimeUnit.SECONDS)
+    }
+
+    private fun startPing() {
+        stopPing()
+        val activeSessionId = sessionId ?: return
+        pingTask = reconnectExecutor.scheduleAtFixedRate(
+            {
+                socket?.send(
+                    JSONObject()
+                        .put("type", "session.ping")
+                        .put("sessionId", activeSessionId)
+                        .toString(),
+                )
+            },
+            20,
+            20,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun stopPing() {
+        pingTask?.cancel(false)
+        pingTask = null
     }
 
     fun sendSignal(sessionId: String, signalType: String, payload: JSONObject) {
@@ -69,8 +127,13 @@ class SignalingClient(
     }
 
     fun close() {
+        closed = true
+        reconnectTask?.cancel(true)
+        reconnectTask = null
+        stopPing()
         socket?.close(1000, "Activity closed")
         socket = null
+        reconnectExecutor.shutdownNow()
         client.dispatcher.executorService.shutdown()
     }
 
@@ -78,7 +141,7 @@ class SignalingClient(
         runCatching {
             val message = JSONObject(text)
             when (message.optString("type")) {
-                "connected" -> Unit
+                "connected", "session.pong" -> Unit
                 "session.requested" -> {
                     val requester = message.optJSONObject("requester")
                     listener.onSessionRequested(

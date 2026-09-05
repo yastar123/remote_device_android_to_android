@@ -16,6 +16,22 @@ data class BackendAuthResult(
     val refreshToken: String,
 )
 
+data class BackendAuthTokens(
+    val accessToken: String,
+    val refreshToken: String,
+)
+
+data class AuthenticatedOperationResult<T>(
+    val value: T,
+    val accessToken: String,
+    val refreshToken: String,
+)
+
+class BackendHttpException(
+    val statusCode: Int,
+    message: String,
+) : IOException(message)
+
 data class BackendSessionResult(
     val id: String,
     val status: String,
@@ -162,6 +178,47 @@ object BackendApiClient {
         request(baseUrl, "/api/v1/sessions/$sessionId/end", "POST", accessToken)
     }
 
+    suspend fun logout(baseUrl: String, accessToken: String) {
+        request(baseUrl, "/api/v1/auth/logout", "POST", accessToken)
+    }
+
+    suspend fun refresh(baseUrl: String, refreshToken: String): BackendAuthTokens {
+        val response = request(
+            baseUrl,
+            "/api/v1/auth/refresh",
+            "POST",
+            null,
+            JSONObject().put("refreshToken", refreshToken),
+        )
+        return BackendAuthTokens(
+            accessToken = response.getString("accessToken"),
+            refreshToken = response.getString("refreshToken"),
+        )
+    }
+
+    suspend fun <T> withAutoRefresh(
+        baseUrl: String,
+        accessToken: String,
+        refreshToken: String,
+        operation: suspend (String) -> T,
+    ): AuthenticatedOperationResult<T> {
+        return try {
+            AuthenticatedOperationResult(
+                value = operation(accessToken),
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+            )
+        } catch (error: BackendHttpException) {
+            if (error.statusCode != 401) throw error
+            val refreshed = refresh(baseUrl, refreshToken)
+            AuthenticatedOperationResult(
+                value = operation(refreshed.accessToken),
+                accessToken = refreshed.accessToken,
+                refreshToken = refreshed.refreshToken,
+            )
+        }
+    }
+
     private suspend fun authenticate(
         baseUrl: String,
         path: String,
@@ -210,7 +267,10 @@ object BackendApiClient {
             val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val message = runCatching { JSONObject(responseBody).optString("message") }.getOrNull()
-                throw IOException(message?.takeIf { it.isNotBlank() } ?: "Server merespons HTTP $status")
+                throw BackendHttpException(
+                    statusCode = status,
+                    message = message?.takeIf { it.isNotBlank() } ?: "Server merespons HTTP $status",
+                )
             }
             if (responseBody.isBlank()) JSONObject() else JSONObject(responseBody)
         } finally {

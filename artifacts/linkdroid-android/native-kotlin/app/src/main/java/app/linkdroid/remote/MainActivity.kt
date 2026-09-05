@@ -78,11 +78,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 class MainActivity : ComponentActivity() {
+    private val secureTokenStore by lazy { SecureTokenStore(applicationContext) }
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        secureTokenStore.migrateLegacy(getPreferences(MODE_PRIVATE))
         if (Build.VERSION.SDK_INT >= 33 &&
             getPreferences(MODE_PRIVATE).getBoolean("notifications", true)
         ) {
@@ -98,8 +100,11 @@ class MainActivity : ComponentActivity() {
         var email by rememberSaveable {
             mutableStateOf(getPreferences(MODE_PRIVATE).getString("email", null))
         }
-        var accessToken by rememberSaveable {
-            mutableStateOf(getPreferences(MODE_PRIVATE).getString("access_token", null))
+        var accessToken by remember {
+            mutableStateOf(secureTokenStore.accessToken())
+        }
+        var refreshToken by remember {
+            mutableStateOf(secureTokenStore.refreshToken())
         }
         var role by rememberSaveable {
             mutableStateOf(
@@ -126,6 +131,24 @@ class MainActivity : ComponentActivity() {
         var adminTasks by remember { mutableStateOf<List<BackendTaskSummary>>(emptyList()) }
         val registrationScope = rememberCoroutineScope()
         val currentDeviceId = remember { getOrCreateDeviceId() }
+        suspend fun <T> withAuthenticatedApi(operation: suspend (String) -> T): T {
+            val currentAccessToken = accessToken
+                ?: throw IllegalStateException("Login server diperlukan.")
+            val currentRefreshToken = refreshToken
+                ?: throw IllegalStateException("Sesi login sudah tidak dapat diperbarui. Silakan login kembali.")
+            val result = BackendApiClient.withAutoRefresh(
+                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                accessToken = currentAccessToken,
+                refreshToken = currentRefreshToken,
+                operation = operation,
+            )
+            if (result.accessToken != currentAccessToken || result.refreshToken != currentRefreshToken) {
+                secureTokenStore.saveTokens(result.accessToken, result.refreshToken)
+                accessToken = result.accessToken
+                refreshToken = result.refreshToken
+            }
+            return result.value
+        }
         var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
         var submittedCustomer by remember { mutableStateOf<CustomerData?>(null) }
@@ -139,14 +162,16 @@ class MainActivity : ComponentActivity() {
                 registrationStatus = "Sedang mendaftarkan device ke server..."
                 registrationScope.launch {
                     runCatching {
-                        BackendApiClient.registerDevice(
-                            baseUrl = BuildConfig.BACKEND_BASE_URL,
-                            accessToken = accessToken.orEmpty(),
-                            deviceId = currentDeviceId,
-                            deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
-                            androidVersion = Build.VERSION.RELEASE.orEmpty(),
-                            appVersion = BuildConfig.VERSION_NAME,
-                        )
+                        withAuthenticatedApi { token ->
+                            BackendApiClient.registerDevice(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = token,
+                                deviceId = currentDeviceId,
+                                deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+                                androidVersion = Build.VERSION.RELEASE.orEmpty(),
+                                appVersion = BuildConfig.VERSION_NAME,
+                            )
+                        }
                     }.onSuccess {
                         registrationStatus = "Device sudah terdaftar di server."
                     }.onFailure { error ->
@@ -159,10 +184,12 @@ class MainActivity : ComponentActivity() {
             if (role == UserRole.ADMIN && !accessToken.isNullOrBlank()) {
                 registrationScope.launch {
                     runCatching {
-                        BackendApiClient.listTasks(
-                            baseUrl = BuildConfig.BACKEND_BASE_URL,
-                            accessToken = accessToken.orEmpty(),
-                        )
+                        withAuthenticatedApi { token ->
+                            BackendApiClient.listTasks(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = token,
+                            )
+                        }
                     }.onSuccess { adminTasks = it }
                         .onFailure { message = "Data tugas gagal dimuat: ${it.message ?: "server tidak dapat dihubungi"}" }
                 }
@@ -171,16 +198,18 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(email, currentDeviceId, accessToken) {
             if (!email.isNullOrBlank() && !accessToken.isNullOrBlank()) registerCurrentDevice()
         }
-        LaunchedEffect(currentDeviceId, accessToken) {
+        LaunchedEffect(currentDeviceId, accessToken, refreshToken) {
             val token = accessToken
             if (!token.isNullOrBlank()) {
                 while (isActive) {
                     runCatching {
-                        BackendApiClient.heartbeat(
-                            baseUrl = BuildConfig.BACKEND_BASE_URL,
-                            accessToken = token,
-                            deviceId = currentDeviceId,
-                        )
+                        withAuthenticatedApi { currentToken ->
+                            BackendApiClient.heartbeat(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = currentToken,
+                                deviceId = currentDeviceId,
+                            )
+                        }
                     }
                     delay(30_000)
                 }
@@ -199,7 +228,7 @@ class MainActivity : ComponentActivity() {
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
-        DisposableEffect(accessToken, currentDeviceId) {
+        DisposableEffect(accessToken, currentDeviceId, activeRemoteSession?.sessionId) {
             val token = accessToken
             if (token.isNullOrBlank()) {
                 onDispose { }
@@ -208,6 +237,7 @@ class MainActivity : ComponentActivity() {
                     baseUrl = BuildConfig.BACKEND_BASE_URL,
                     accessToken = token,
                     deviceId = currentDeviceId,
+                    sessionId = activeRemoteSession?.sessionId,
                     listener = object : SignalingClient.Listener {
                         override fun onConnected() {
                             runOnUiThread { message = "Signaling server tersambung." }
@@ -222,14 +252,15 @@ class MainActivity : ComponentActivity() {
 
                         override fun onSessionEvent(type: String, sessionId: String) {
                             runOnUiThread {
-                                if (type == "session.approved") {
+                                if (type == "session.approved" || type == "session.active") {
                                     message = "Permintaan monitoring disetujui petugas."
                                 } else if (type == "session.rejected") {
                                     message = "Permintaan monitoring ditolak petugas."
                                     activeSession = null
-                                } else if (type == "session.ended") {
+                                } else if (type == "session.ended" || type == "session.expired") {
                                     message = "Sesi monitoring telah dihentikan."
                                     activeSession = null
+                                    sessionCoordinator.stop()
                                 }
                             }
                         }
@@ -283,12 +314,14 @@ class MainActivity : ComponentActivity() {
                     message = "Mengirim permintaan monitoring ke device petugas..."
                     registrationScope.launch {
                         runCatching {
-                            BackendApiClient.createSession(
-                                baseUrl = BuildConfig.BACKEND_BASE_URL,
-                                accessToken = accessToken.orEmpty(),
-                                controllerDeviceId = currentDeviceId,
-                                receiverDeviceId = normalized,
-                            )
+                                withAuthenticatedApi { token ->
+                                    BackendApiClient.createSession(
+                                        baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                        accessToken = token,
+                                        controllerDeviceId = currentDeviceId,
+                                        receiverDeviceId = normalized,
+                                    )
+                                }
                         }.onSuccess { remoteSession ->
                             sessionCoordinator.start(
                                 RemoteSession(
@@ -339,12 +372,12 @@ class MainActivity : ComponentActivity() {
                             getPreferences(MODE_PRIVATE).edit()
                                 .putString("email", result.email)
                                 .putString("role", result.role.name)
-                                .putString("access_token", result.accessToken)
-                                .putString("refresh_token", result.refreshToken)
                                 .apply()
+                            secureTokenStore.saveTokens(result.accessToken, result.refreshToken)
                             email = result.email
                             role = result.role
                             accessToken = result.accessToken
+                            refreshToken = result.refreshToken
                             authBusy = false
                             screen = AppScreen.HOME
                         }.onFailure { error ->
@@ -413,11 +446,13 @@ class MainActivity : ComponentActivity() {
                             if (!token.isNullOrBlank()) {
                                 registrationScope.launch {
                                     runCatching {
-                                        BackendApiClient.approveSession(
-                                            BuildConfig.BACKEND_BASE_URL,
-                                            token,
-                                            incoming.sessionId,
-                                        )
+                                        withAuthenticatedApi { currentToken ->
+                                            BackendApiClient.approveSession(
+                                                BuildConfig.BACKEND_BASE_URL,
+                                                currentToken,
+                                                incoming.sessionId,
+                                            )
+                                        }
                                     }.onSuccess {
                                         pendingIncomingSession = null
                                         sessionCoordinator.start(
@@ -440,11 +475,13 @@ class MainActivity : ComponentActivity() {
                             if (!token.isNullOrBlank()) {
                                 registrationScope.launch {
                                     runCatching {
-                                        BackendApiClient.rejectSession(
-                                            BuildConfig.BACKEND_BASE_URL,
-                                            token,
-                                            incoming.sessionId,
-                                        )
+                                        withAuthenticatedApi { currentToken ->
+                                            BackendApiClient.rejectSession(
+                                                BuildConfig.BACKEND_BASE_URL,
+                                                currentToken,
+                                                incoming.sessionId,
+                                            )
+                                        }
                                     }.onSuccess {
                                         pendingIncomingSession = null
                                         message = "Permintaan monitoring ditolak."
@@ -469,22 +506,26 @@ class MainActivity : ComponentActivity() {
                             message = "Menyimpan data pelanggan ke server..."
                             registrationScope.launch {
                                 runCatching {
-                                    BackendApiClient.createCustomerTask(
-                                        baseUrl = BuildConfig.BACKEND_BASE_URL,
-                                        accessToken = accessToken.orEmpty(),
-                                        workerDeviceId = currentDeviceId,
-                                        customer = it,
-                                    )
+                                    withAuthenticatedApi { token ->
+                                        BackendApiClient.createCustomerTask(
+                                            baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                            accessToken = token,
+                                            workerDeviceId = currentDeviceId,
+                                            customer = it,
+                                        )
+                                    }
                                 }.onSuccess { taskId ->
                                     submittedCustomer = it
                                     submittedTaskId = taskId
                                     runCatching {
-                                        BackendApiClient.updateTaskStatus(
-                                            baseUrl = BuildConfig.BACKEND_BASE_URL,
-                                            accessToken = accessToken.orEmpty(),
-                                            taskId = taskId,
-                                            status = "PLN_MOBILE",
-                                        )
+                                        withAuthenticatedApi { token ->
+                                            BackendApiClient.updateTaskStatus(
+                                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                                accessToken = token,
+                                                taskId = taskId,
+                                                status = "PLN_MOBILE",
+                                            )
+                                        }
                                     }
                                     submittingTask = false
                                     message = "Data pelanggan tersimpan dan dikirim ke server."
@@ -550,11 +591,13 @@ class MainActivity : ComponentActivity() {
                             if (!serverSessionId.isNullOrBlank() && !accessToken.isNullOrBlank()) {
                                 registrationScope.launch {
                                     runCatching {
-                                        BackendApiClient.endSession(
-                                            BuildConfig.BACKEND_BASE_URL,
-                                            accessToken.orEmpty(),
-                                            serverSessionId,
-                                        )
+                                        withAuthenticatedApi { token ->
+                                            BackendApiClient.endSession(
+                                                BuildConfig.BACKEND_BASE_URL,
+                                                token,
+                                                serverSessionId,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -600,6 +643,14 @@ class MainActivity : ComponentActivity() {
                         message = "Berbagi layar dihentikan."
                     },
                     onLogout = {
+                        val logoutToken = accessToken
+                        if (!logoutToken.isNullOrBlank()) {
+                            registrationScope.launch {
+                                runCatching {
+                                    BackendApiClient.logout(BuildConfig.BACKEND_BASE_URL, logoutToken)
+                                }
+                            }
+                        }
                         stopService(Intent(this, ScreenCaptureService::class.java))
                         sessionCoordinator.stop()
                         cancelSessionNotification()
@@ -607,11 +658,11 @@ class MainActivity : ComponentActivity() {
                         getPreferences(MODE_PRIVATE).edit()
                             .remove("email")
                             .remove("role")
-                            .remove("access_token")
-                            .remove("refresh_token")
                             .apply()
+                        secureTokenStore.clearTokens()
                         email = null
                         accessToken = null
+                        refreshToken = null
                         role = UserRole.ADMIN
                         activeSession = null
                         submittedCustomer = null

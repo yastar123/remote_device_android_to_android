@@ -35,10 +35,10 @@ di dalam artifact Android.
 | UI Compose | Ada | Alur runtime belum dibuktikan dengan APK/emulator dari repository ini. |
 | Backend Express | Ada dan berhasil dibuild lokal | Tetap wajib memiliki environment dan PostgreSQL aktif saat dijalankan. |
 | Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
-| JWT access/refresh token | Ada di backend | Client menyimpan token, tetapi belum memiliki flow refresh otomatis. |
+| JWT access/refresh token | Ada di backend dan client | Client memakai Keystore, refresh otomatis, rotasi, dan logout. |
 | Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
 | REST session lifecycle | Ada | Media dan kontrol remote belum terhubung. |
-| WebSocket signaling relay | Ada | Android belum membuat `PeerConnection` atau mengirim signal dari alur UI. |
+| WebSocket signaling relay | Ada dengan ping, aktivasi, dan reconnect | Android belum membuat `PeerConnection` atau mengirim signal dari alur UI. |
 | Screen capture lokal | Ada | Hanya membuat VirtualDisplay dan membaca lalu membuang frame. |
 | Accessibility service | Ada | Hanya memiliki helper tap; belum menerima command remote. |
 | WebRTC/video/audio | Tidak ada | Tidak ada dependency atau implementasi `PeerConnection`. |
@@ -192,10 +192,12 @@ Schema Prisma berisi model:
 - `AuditLog`.
 
 Status session yang didefinisikan adalah `REQUESTED`, `APPROVED`, `ACTIVE`,
-`REJECTED`, `ENDED`, dan `EXPIRED`. Source endpoint approval mengubah status
-menjadi `APPROVED`, sedangkan end mengubahnya menjadi `ENDED`. Tidak ada
-scheduler expiry atau endpoint yang mengubah session menjadi `ACTIVE` pada
-source saat ini.
+`REJECTED`, `ENDED`, dan `EXPIRED`. Endpoint approval mengubah status menjadi
+`APPROVED`, koneksi WebSocket pada session yang disetujui mengaktifkannya menjadi
+`ACTIVE`, sedangkan end mengubahnya menjadi `ENDED`. Backend juga memiliki
+scheduler expiry setiap 60 detik: request yang terlalu lama dan session yang
+idle akan diubah menjadi `EXPIRED`, dicatat ke audit log, dan diberitahukan ke
+participant.
 
 Audit log ditulis untuk event register user, register/revoke device, request/
 approve/reject/end session, create task, dan perubahan status task. Belum ada
@@ -216,9 +218,10 @@ Server:
 - hanya mengizinkan device yang menjadi controller atau receiver session;
 - hanya mengizinkan session berstatus `APPROVED` atau `ACTIVE`.
 
-Pesan yang didefinisikan juga memuat `session.ping`, tetapi implementasi relay
-utama hanya menggunakan payload signaling yang tervalidasi sebagai
-`offer`, `answer`, atau `ice-candidate`.
+Pesan `session.ping` divalidasi terpisah, memperbarui aktivitas session, dan
+mendapat balasan `session.pong`. Android memakai ping tersebut untuk menjaga
+session aktif. Client Android juga melakukan reconnect otomatis dengan
+exponential backoff sampai 30 detik.
 
 ## 5. Integrasi Android dengan backend
 
@@ -237,7 +240,8 @@ utama hanya menggunakan payload signaling yang tervalidasi sebagai
 
 - koneksi berhasil;
 - session request;
-- session approved/rejected/ended;
+- session approved/active/rejected/ended/expired;
+- ping/pong dan reconnect dengan exponential backoff;
 - error signaling.
 
 Client tersebut memiliki method `sendSignal`, tetapi alur `MainActivity` saat ini
@@ -289,14 +293,15 @@ Accessibility Service baru memiliki helper `tap`. Belum ada:
 - swipe, text input, back, home, atau command lain;
 - pengiriman command melalui WebRTC data channel atau transport lain.
 
-### C. Auth client belum lengkap
+### C. Auth client masih memiliki batasan
 
-Backend memiliki endpoint refresh dan rotasi refresh token, tetapi Android:
+Android sekarang:
 
-- menyimpan access dan refresh token di preferences;
-- tidak mengimplementasikan refresh otomatis saat access token kedaluwarsa;
-- tidak memanggil endpoint logout saat pengguna menekan logout;
-- hanya menghapus token lokal saat logout.
+- menyimpan access dan refresh token terenkripsi menggunakan Android Keystore;
+- memigrasikan token plaintext lama satu kali lalu menghapus salinan lama;
+- otomatis memanggil refresh dan menyimpan token hasil rotasi saat request
+  authenticated menerima HTTP 401;
+- memanggil endpoint logout dan tetap menghapus token lokal.
 
 Backend juga belum memiliki reset password, verifikasi email, atau manajemen
 akun.
@@ -308,9 +313,9 @@ di state Activity/Compose. Belum ada repository/session store yang memulihkan
 state secara penuh setelah process death, recreation, atau service berjalan
 terpisah.
 
-Backend memiliki status `EXPIRED`, tetapi source belum menyediakan mekanisme
-expiry otomatis. Reconnect WebSocket juga belum memiliki strategi retry/backoff
-di client.
+Backend sudah memiliki scheduler expiry dan client sudah memiliki retry/backoff
+WebSocket. Yang masih belum selesai adalah pemulihan penuh state session,
+screen sharing, dan task setelah process death atau service berjalan terpisah.
 
 ### E. Notifikasi masih dasar
 
@@ -354,8 +359,6 @@ Fondasi yang sudah ada:
 
 Yang masih perlu diselesaikan atau diverifikasi:
 
-- penyimpanan token Android yang lebih aman daripada preferences biasa;
-- refresh token otomatis dan penanganan token kedaluwarsa;
 - validasi deployment HTTPS/WSS yang benar;
 - konfigurasi CORS production yang tidak memakai wildcard bila tidak diperlukan;
 - pembatasan dan rotasi secret;
@@ -478,8 +481,7 @@ Urutan yang paling langsung berdasarkan gap saat ini:
    TURN, video frame, dan lifecycle connection.
 6. Tambahkan data channel serta command remote yang tervalidasi dan dibatasi
    pada session approved.
-7. Perbaiki refresh token, reconnect, session expiry, dan lifecycle lintas
-   Activity/service.
+7. Perbaiki pemulihan state lintas process death, Activity, dan service.
 8. Tambahkan test unit, integration, instrumented, lint, dan uji perangkat
    fisik.
 9. Lengkapi privacy/consent, logging, monitoring, backup, release signing, dan
@@ -491,10 +493,10 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 - [ ] Backend dapat start dengan environment valid.
 - [ ] PostgreSQL migration berhasil diterapkan pada database target.
 - [ ] `/health` mengembalikan database `up`.
-- [ ] Register/login/refresh/logout diuji.
+- [ ] Register/login/refresh/logout diuji pada backend dan client.
 - [ ] Device registration, heartbeat, list, dan revoke diuji.
 - [ ] Request, approve, reject, dan end session diuji dengan dua akun.
-- [ ] WebSocket authentication dan reconnect diuji.
+- [ ] WebSocket authentication dan reconnect diuji pada environment Android.
 - [ ] WebRTC video benar-benar mengirim frame ke controller.
 - [ ] TURN/STUN diuji pada jaringan yang relevan.
 - [ ] Data channel command remote divalidasi dan memiliki timeout/error response.
@@ -503,7 +505,8 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 - [ ] Customer task dan status lifecycle diuji.
 - [ ] Unit test, integration test, instrumented test, lint, dan release build
   berhasil.
-- [ ] Token storage, privacy policy, consent, abuse reporting, monitoring,
+- [x] Token storage Android memakai Keystore dan refresh/logout client tersedia.
+- [ ] Privacy policy, consent, abuse reporting, monitoring,
   backup, dan rollback operasional tersedia.
 
 ## Kesimpulan
@@ -515,7 +518,9 @@ Accessibility Service juga sudah dideklarasikan, tetapi keduanya belum
 terhubung ke transport remote.
 
 Sistem ini belum dapat disebut remote-support end-to-end karena belum memiliki
-WebRTC/video, data channel, command remote, refresh flow client yang lengkap,
-expiry/reconnect yang lengkap, deployment yang terverifikasi, dan pengujian
-dua perangkat. Dokumentasi atau UI yang menyatakan “menunggu koneksi” tidak
-boleh dianggap sebagai bukti bahwa koneksi media sudah aktif.
+WebRTC/video, data channel, command remote, deployment yang terverifikasi, dan
+pengujian dua perangkat. Refresh token client, expiry session backend, dan
+reconnect signaling sudah diimplementasikan, tetapi tetap perlu diuji pada
+environment Android dan jaringan yang relevan. Dokumentasi atau UI yang
+menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti bahwa koneksi
+media sudah aktif.

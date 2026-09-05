@@ -9,6 +9,8 @@ const envSchema = z.object({
   JWT_ISSUER: z.string().default("linkdroid-api"),
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_DAYS: z.coerce.number().int().positive().default(30),
+  SESSION_REQUEST_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(10),
+  SESSION_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(30),
   CORS_ORIGIN: z.string().default("*"),
   ADMIN_INVITE_CODE: z.string().optional(),
   TURN_URLS: z.string().optional(),

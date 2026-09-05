@@ -5,12 +5,18 @@ import { z } from "zod";
 import { prisma } from "./db.js";
 import { verifyAccessToken, type AuthUser } from "./auth.js";
 
-const signalSchema = z.object({
-  type: z.enum(["session.signal", "session.ping"]),
-  sessionId: z.string().uuid(),
-  signalType: z.enum(["offer", "answer", "ice-candidate"]),
-  payload: z.unknown(),
-});
+const signalSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("session.signal"),
+    sessionId: z.string().uuid(),
+    signalType: z.enum(["offer", "answer", "ice-candidate"]),
+    payload: z.unknown(),
+  }),
+  z.object({
+    type: z.literal("session.ping"),
+    sessionId: z.string().uuid(),
+  }),
+]);
 
 type Client = { socket: WebSocket; user: AuthUser; deviceId: string };
 
@@ -29,6 +35,7 @@ export class SignalingHub {
     socket.on("close", () => this.remove(client));
     socket.on("error", () => this.remove(client));
     socket.send(JSON.stringify({ type: "connected", deviceId }));
+    void this.activateApprovedSessions(user.id, deviceId);
   }
 
   emitToUser(userId: string, message: unknown) {
@@ -81,6 +88,15 @@ export class SignalingHub {
       return;
     }
 
+    if (message.type === "session.ping") {
+      await prisma.remoteSession.update({
+        where: { id: session.id },
+        data: { updatedAt: new Date() },
+      });
+      client.socket.send(JSON.stringify({ type: "session.pong", sessionId: session.id }));
+      return;
+    }
+
     const targetUserId = isController ? session.receiverId : session.requesterId;
     this.emitToUser(targetUserId, {
       type: "session.signal",
@@ -89,6 +105,28 @@ export class SignalingHub {
       signalType: message.signalType,
       payload: message.payload,
     });
+  }
+
+  private async activateApprovedSessions(userId: string, deviceId: string) {
+    const sessions = await prisma.remoteSession.findMany({
+      where: {
+        status: "APPROVED",
+        OR: [
+          { requesterId: userId, controllerDevice: { deviceId } },
+          { receiverId: userId, receiverDevice: { deviceId } },
+        ],
+      },
+      select: { id: true, requesterId: true, receiverId: true },
+    });
+
+    for (const session of sessions) {
+      const updated = await prisma.remoteSession.update({
+        where: { id: session.id },
+        data: { status: "ACTIVE" },
+      });
+      this.emitToUser(session.requesterId, { type: "session.active", session: updated });
+      this.emitToUser(session.receiverId, { type: "session.active", session: updated });
+    }
   }
 }
 
