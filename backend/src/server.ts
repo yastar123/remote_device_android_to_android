@@ -23,6 +23,7 @@ import { disconnectDatabase, prisma, writeAudit } from "./db.js";
 import { authenticateWebSocket, createWebSocketServer, SignalingHub } from "./ws.js";
 
 const app = express();
+app.set("trust proxy", "loopback");
 const httpServer = http.createServer(app);
 const hub = new SignalingHub();
 const websocketServer = createWebSocketServer(hub);

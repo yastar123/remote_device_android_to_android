@@ -31,6 +31,7 @@ backend/dist/
 backend/.env
 .env
 *.tsbuildinfo
+attached_assets/Pasted--Log-Perubahan-Status-VPS-LinkDroid-Backend-Server-rock_1788635847300.txt
 
 # misc
 /connect.lock

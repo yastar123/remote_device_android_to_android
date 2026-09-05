@@ -1,9 +1,9 @@
 # Status Sistem LinkDroid Saat Ini
 
-Dokumen ini menggambarkan kondisi repository **apa adanya berdasarkan source
-code yang tersedia**, bukan klaim bahwa deployment VPS atau pengujian dua
-perangkat sudah berhasil. Dokumen ini dipakai untuk membedakan kemampuan yang
-memang sudah ditulis dari kemampuan yang masih berupa fondasi atau belum ada.
+Dokumen ini menggambarkan kondisi sistem **apa adanya berdasarkan source code
+dan log deployment VPS yang diberikan pemilik sistem**. Status production yang
+dicantumkan di sini berasal dari log tersebut; pengujian APK, dua perangkat,
+dan WebRTC end-to-end tetap dibedakan sebagai pengujian terpisah.
 
 **Pembaruan terakhir:** 6 September 2026
 
@@ -30,16 +30,19 @@ di dalam artifact Android.
 | --- | --- | --- |
 | Aplikasi Android | Ada | Belum berarti berhasil dibuild atau diuji pada perangkat. |
 | UI Compose | Ada | Alur runtime belum dibuktikan dengan APK/emulator dari repository ini. |
-| Backend Express | Ada dan berhasil dibuild lokal | Tetap wajib memiliki environment dan PostgreSQL aktif saat dijalankan. |
-| Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
+| Backend Express | Ada, berhasil dibuild lokal, dan dilaporkan LIVE di VPS | Production berjalan di belakang Nginx/PM2; source repo tidak memuat environment production. |
+| Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration initial dilaporkan sudah diterapkan ke PostgreSQL production. |
 | JWT access/refresh token | Ada di backend dan client | Client memakai Keystore, refresh otomatis, rotasi, dan logout. |
-| Device registration dan heartbeat | Ada di backend/client utama | Daftar device Android kini disinkronkan dari backend; belum ada bukti backend production aktif. |
+| Device registration dan heartbeat | Ada di backend/client utama | Backend production aktif menurut log VPS; alur dari APK production belum diuji satu per satu. |
 | REST session lifecycle | Ada dengan guard transisi status | Sesi mengatur request, approval, active, reject, end, dan expiry; keberhasilan lintas dua device belum dibuktikan. |
 | WebSocket signaling relay | Ada dengan ping, aktivasi, reconnect, SDP/ICE relay, command, dan acknowledgment | Signaling bukan media transport; koneksi WebRTC tetap perlu diuji pada dua device dan jaringan nyata. |
 | Screen capture lokal | Ada | Mode legacy hanya membaca lalu membuang frame; mode WebRTC membuat screen video track, tetapi belum teruji dua device. |
 | Accessibility service | Ada dan menerima command remote | Command tap, swipe, text, back, dan home divalidasi, dibatasi pada session, serta mengembalikan acknowledgment melalui signaling WebSocket. |
 | WebRTC/video | Ada implementasinya | Android memiliki `PeerConnection`, screen video track, offer/answer, ICE candidate, renderer controller, dan data channel; belum ada bukti runtime dua device. |
 | Audio remote | Tidak ada | Tidak ada audio source, audio track, atau audio renderer. |
+| VPS/Nginx/TLS/PM2 | LIVE menurut log deployment | Health check production berhasil; konfigurasi server berada di luar repository. |
+| PostgreSQL production | LIVE menurut log deployment | Database `LINKDROID` dan migration initial dilaporkan berhasil; kredensial tidak disimpan di repo. |
+| TURN/coturn | Terpasang di VPS | TURN credential masih perlu diganti dan koneksi WebRTC nyata belum diverifikasi. |
 | Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif; build Android juga membutuhkan SDK yang tidak disimpan di repo. |
 | Release build/signing | Belum ada | Belum ada keystore, signing config, AAB, atau pipeline release. |
 
@@ -154,8 +157,9 @@ Backend memvalidasi environment berikut saat proses dimulai:
 - `CORS_ORIGIN` — default `*`.
 - `ADMIN_INVITE_CODE` — opsional, tetapi dibutuhkan untuk mendaftarkan role
   `ADMIN`.
-- `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` — opsional; tanpa ketiganya
-  endpoint TURN mengembalikan `503`.
+- `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` — opsional di source;
+  environment production VPS dilaporkan sudah diisi dan coturn berjalan, tetapi
+  kredensial kerja masih perlu diganti dari nilai placeholder.
 
 Nilai rahasia tidak boleh ditulis ke repository atau dokumen ini.
 
@@ -189,7 +193,9 @@ Endpoint dengan Bearer access token:
 - `GET /api/v1/turn/credentials`.
 
 Backend juga memasang Helmet, CORS, body size limit `128kb`, rate limit umum,
-dan rate limit auth. Error validasi Zod dikembalikan sebagai `400`.
+dan rate limit auth. Express mempercayai proxy loopback karena backend berada di
+belakang Nginx pada host yang sama. Error validasi Zod dikembalikan sebagai
+`400`.
 
 ### Database
 
@@ -397,15 +403,22 @@ Fondasi yang sudah ada:
 
 Yang masih perlu diselesaikan atau diverifikasi:
 
-- validasi deployment HTTPS/WSS yang benar;
+- rotasi seluruh credential production yang tercantum atau pernah tercantum
+  pada log deployment;
 - konfigurasi CORS production yang tidak memakai wildcard bila tidak diperlukan;
-- pembatasan dan rotasi secret;
+- penggunaan database user non-superuser;
+- hardening SSH root dan pemasangan fail2ban;
+- audit dependency secara penuh dan penanganan vulnerability;
 - proteksi replay dan token/session yang lebih spesifik;
 - policy retensi dan penghapusan data pelanggan;
 - privacy policy dan consent screen capture/accessibility;
 - mekanisme pelaporan penyalahgunaan;
 - audit terhadap metadata customer task yang mengandung data pribadi;
 - hardening, backup, monitoring, dan incident response deployment.
+
+Log deployment yang diberikan berisi material credential production. File log
+tersebut tidak boleh di-commit atau dibagikan, dan semua credential yang
+terekspos harus diganti melalui mekanisme secret/environment di VPS.
 
 ## 8. Gap build dan verifikasi
 
@@ -458,10 +471,14 @@ npm run backend:dev
 npm run backend:start
 ```
 
-Backend membutuhkan `.env` di root repository yang berisi `DATABASE_URL` dan
+`package-lock.json` sudah diregenerasi dari registry npm publik sehingga tidak
+lagi bergantung pada URL registry internal Replit.
+
+Backend membutuhkan environment runtime yang berisi `DATABASE_URL` dan
 `JWT_SECRET` minimal, serta database PostgreSQL yang sudah dibuat. Template yang
-tersedia ada di `backend/.env.example`. Tidak ada nilai production yang boleh
-diasumsikan dari source.
+tersedia ada di `backend/.env.example`; lokasi file `.env` yang digunakan oleh
+PM2 harus dipastikan sesuai dengan working directory proses. Tidak ada nilai
+production yang boleh diasumsikan dari source.
 
 ### Verifikasi backend lokal yang tercatat
 
@@ -474,10 +491,24 @@ Verifikasi berikut berhasil dilakukan pada workspace, bukan pada VPS:
 - `GET /health` mengembalikan HTTP `200` dengan `database: "up"`.
 - Proses backend menerima `SIGTERM` dan melakukan shutdown dengan bersih.
 
-Health check tersebut tidak membuktikan bahwa PM2, Nginx, HTTPS, TURN, atau
-database production di VPS sudah aktif. Validasi lokal juga menggunakan secret
-validasi sementara untuk proses tersebut; secret production tetap harus diisi
-sendiri pada `.env` VPS.
+Validasi lokal tidak membuktikan kondisi VPS. Berdasarkan log deployment yang
+diberikan pemilik sistem, verifikasi production berikut sudah berhasil:
+
+- repository berhasil di-clone ke VPS;
+- dependency berhasil dipasang dari registry npm publik setelah lockfile lama
+  yang mengarah ke registry internal diganti;
+- Prisma Client berhasil dibuat dan migration initial berhasil diterapkan ke
+  database `LINKDROID`;
+- backend berhasil dibuild;
+- PM2 menjalankan `linkdroid-backend` dan diset auto-start saat reboot;
+- Nginx meneruskan HTTPS dan WebSocket ke `127.0.0.1:3000`;
+- `GET https://103-245-38-142.sslip.io/health` mengembalikan HTTP `200` dengan
+  database `up`;
+- coturn tersedia pada VPS untuk konfigurasi TURN.
+
+Log tersebut adalah bukti operasional yang dilaporkan, bukan pengujian yang
+dijalankan ulang dari workspace ini. Nilai secret production tidak dicatat di
+dokumen ini.
 
 Pada database lokal yang belum menjalankan migration, server tetap start dan
 `/health` tetap dapat menjawab, tetapi scheduler expiry memberi peringatan bahwa
@@ -493,32 +524,46 @@ Repository mendefinisikan base URL Android sebagai:
 https://103-245-38-142.sslip.io
 ```
 
-Repository ini **tidak membuktikan** bahwa domain tersebut sedang:
+Menurut log deployment VPS tanggal 5–6 September 2026, deployment production
+sudah **LIVE dan health check berhasil**:
 
-- mengarah ke server yang benar;
-- memiliki Nginx atau TLS yang aktif;
-- meneruskan traffic ke port `3000`;
-- menjalankan backend;
-- memiliki database LinkDroid;
-- memiliki TURN credential yang valid.
+- HTTP diarahkan ke HTTPS;
+- TLS aktif pada domain;
+- Nginx melakukan reverse proxy ke `127.0.0.1:3000`;
+- PM2 menjalankan proses `linkdroid-backend`;
+- PostgreSQL production aktif dan migration initial sudah diterapkan;
+- `GET /health` mengembalikan `200` dengan database `up`;
+- konfigurasi WebSocket diteruskan oleh Nginx;
+- coturn berjalan pada VPS.
 
-Dengan demikian, status deployment production harus dianggap **belum
-terverifikasi**, bukan dianggap aktif atau dianggap pasti `502`, kecuali ada
-hasil pengecekan deployment terbaru yang dicatat terpisah.
+Status di atas membuktikan backend dan jalur deployment dasar, bukan berarti
+register/login, pairing device, video WebRTC, TURN, atau kontrol remote sudah
+diuji melalui APK sungguhan.
 
 Backend secara default listen pada `127.0.0.1:3000`. Agar dapat diakses dari
 domain, dibutuhkan reverse proxy dan proses backend yang benar-benar berjalan
-dengan environment serta migration yang sesuai. Source menyediakan
-`backend/ecosystem.config.cjs` untuk rencana PM2, tetapi file itu sendiri bukan
-bukti bahwa PM2 sudah menjalankan proses.
+dengan environment serta migration yang sesuai. Source menyediakan konfigurasi
+PM2 di `backend/ecosystem.config.cjs`; log VPS melaporkan proses tersebut sudah
+berjalan dan tersimpan untuk auto-start.
+
+VPS bersifat shared/multi-tenant. Proses dan layanan aplikasi lain pada server
+tersebut tidak termasuk LinkDroid dan tidak diubah dalam deployment ini.
+
+Port yang dilaporkan aktif:
+
+- `80` dan `443` — Nginx HTTP redirect dan HTTPS reverse proxy;
+- `3000` — backend LinkDroid, hanya listen pada localhost;
+- `3478` dan `5349` — coturn/TURN;
+- `5432` — PostgreSQL, hanya listen pada localhost.
 
 ## 10. Prioritas pekerjaan berikutnya
 
 Urutan yang paling langsung berdasarkan gap saat ini:
 
-1. Sediakan Android SDK platform 35 dan buktikan `assembleDebug`.
-2. Sediakan PostgreSQL dan environment backend tanpa memasukkan secret ke Git.
-3. Jalankan migration, backend, dan health check secara terkontrol.
+1. Rotasi semua credential production yang terekspos pada log dan pastikan
+   `backend/.env` serta log deployment tidak pernah masuk Git.
+2. Ganti database user superuser, perketat CORS, dan hardening SSH/fail2ban.
+3. Sediakan Android SDK platform 35 dan buktikan `assembleDebug`.
 4. Uji register/login/refresh/logout, pairing, heartbeat, task, dan session
    dengan dua akun.
 5. Build APK dan uji alur WebRTC pada dua device: permission, offer/answer,
@@ -535,9 +580,12 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 ## 11. Checklist launch
 
 - [ ] Android debug APK berhasil dibuild.
-- [ ] Backend dapat start dengan environment valid.
-- [ ] PostgreSQL migration berhasil diterapkan pada database target.
-- [ ] `/health` mengembalikan database `up`.
+- [x] Backend dapat start dengan environment valid di VPS (berdasarkan log).
+- [x] PostgreSQL migration berhasil diterapkan pada database production
+  (berdasarkan log).
+- [x] `/health` mengembalikan database `up` di domain production (berdasarkan
+  log).
+- [x] HTTPS/WSS Nginx dan PM2 production berjalan (berdasarkan log).
 - [ ] Register/login/refresh/logout diuji pada backend dan client.
 - [ ] Device registration, heartbeat, list, dan revoke diuji.
 - [ ] Request, approve, reject, dan end session diuji dengan dua akun.
@@ -559,17 +607,17 @@ Urutan yang paling langsung berdasarkan gap saat ini:
 
 ## Kesimpulan
 
-LinkDroid saat ini adalah fondasi aplikasi Android native dan backend API yang
-sudah memiliki auth, device pairing, heartbeat, customer task, request/
-approval session, audit log, relay WebSocket, WebRTC video/data channel, serta
-command remote tervalidasi dengan acknowledgment. Screen capture,
-Accessibility Service, signaling SDP/ICE, renderer video, dan command data
-channel sudah ditulis di source.
+LinkDroid saat ini memiliki aplikasi Android native, backend API production yang
+dilaporkan LIVE, PostgreSQL production dengan migration initial, Nginx TLS/
+WebSocket reverse proxy, PM2 auto-start, auth, device pairing, heartbeat,
+customer task, request/approval session, audit log, relay WebSocket, WebRTC
+video/data channel, serta command remote tervalidasi dengan acknowledgment.
+Screen capture, Accessibility Service, signaling SDP/ICE, renderer video, dan
+command data channel sudah ditulis di source.
 
 Sistem ini belum boleh dianggap sebagai remote-support end-to-end yang
-terbukti karena build APK, pengujian dua perangkat, koneksi video runtime,
-TURN/STUN pada jaringan relevan, dan pemulihan setelah gangguan belum
-dibuktikan dari repository ini. Command masih memiliki fallback signaling
-WebSocket. Audio remote belum diimplementasikan. Dokumentasi atau UI yang
-menyatakan “menunggu koneksi” tidak boleh dianggap sebagai bukti bahwa koneksi
-media sudah aktif.
+terbukti hanya karena backend production sudah live. Build APK, pengujian dua
+perangkat, koneksi video runtime, TURN/STUN pada jaringan relevan, dan pemulihan
+setelah gangguan belum dibuktikan. Command masih memiliki fallback signaling
+WebSocket. Audio remote belum diimplementasikan. Credential production juga
+harus dirotasi karena tercantum pada log deployment yang diberikan.
