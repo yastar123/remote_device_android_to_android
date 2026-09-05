@@ -36,6 +36,19 @@ memanggil API atau WebSocket karena backend/signaling dan kontraknya belum ada.
 Jangan menganggap tombol `Hubungkan` sebagai koneksi antarperangkat sebelum
 backend, autentikasi, signaling, dan WebRTC selesai.
 
+## Alur monitoring petugas
+
+- Saat login, pengguna memilih peran `Admin` atau `Petugas`.
+- Admin memasukkan ID device petugas dari layar Monitoring untuk memulai
+  permintaan sesi remote.
+- Petugas melihat ID device-nya di beranda, lalu mengisi nama pelanggan, IDPEL,
+  alamat, wilayah, dan provinsi pada formulir Data pelanggan.
+- Tombol `Simpan & Lanjut` memvalidasi IDPEL 11–12 digit dan seluruh field sebelum
+  membawa petugas ke tahap PLN Mobile.
+- Di tahap PLN Mobile, petugas dapat meminta izin MediaProjection Android agar
+  layar dapat dipantau. Pemantauan antar-device yang benar-benar tersambung tetap
+  menunggu backend signaling/WebRTC.
+
 ## Stack
 
 - Kotlin
