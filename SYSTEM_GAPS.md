@@ -5,7 +5,7 @@ code yang tersedia**, bukan klaim bahwa deployment VPS atau pengujian dua
 perangkat sudah berhasil. Dokumen ini dipakai untuk membedakan kemampuan yang
 memang sudah ditulis dari kemampuan yang masih berupa fondasi atau belum ada.
 
-**Pembaruan terakhir:** 5 September 2026
+**Pembaruan terakhir:** 6 September 2026
 
 ## 1. Struktur project yang sebenarnya
 
@@ -37,8 +37,8 @@ di dalam artifact Android.
 | Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
 | JWT access/refresh token | Ada di backend dan client | Client memakai Keystore, refresh otomatis, rotasi, dan logout. |
 | Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
-| REST session lifecycle | Ada | Media dan kontrol remote belum terhubung. |
-| WebSocket signaling relay | Ada dengan ping, aktivasi, dan reconnect | Android belum membuat `PeerConnection` atau mengirim signal dari alur UI. |
+| REST session lifecycle | Ada | Media WebRTC belum terhubung; command remote sudah memakai signaling WebSocket. |
+| WebSocket signaling relay | Ada dengan ping, aktivasi, reconnect, command, dan acknowledgment | Android belum membuat `PeerConnection` atau mengirim offer/answer/ICE dari alur UI. |
 | Screen capture lokal | Ada | Hanya membuat VirtualDisplay dan membaca lalu membuang frame. |
 | Accessibility service | Ada dan menerima command remote | Command tap, swipe, text, back, dan home divalidasi, dibatasi pada session, serta mengembalikan acknowledgment melalui signaling WebSocket. |
 | WebRTC/video/audio | Tidak ada | Tidak ada dependency atau implementasi `PeerConnection`. |
@@ -250,7 +250,8 @@ exponential backoff sampai 30 detik.
 
 Client tersebut memiliki method `sendSignal`, tetapi alur `MainActivity` saat ini
 tidak membuat object WebRTC dan tidak memanggil method itu untuk mengirim
-offer, answer, atau ICE candidate.
+offer, answer, atau ICE candidate. Client juga memiliki `sendCommand` dan
+`sendCommandResult` untuk command remote berbasis signaling WebSocket.
 
 Ada file `DeviceRegistrationClient.kt` yang mengirim payload lama tanpa header
 Bearer dan tidak dipakai oleh alur utama `MainActivity`. Kontrak yang dipakai
@@ -268,6 +269,8 @@ Yang sudah ada hanya:
 4. Petugas approve atau reject.
 5. Backend mengirim event status kepada participant.
 6. Android menampilkan state dan dapat menjalankan screen capture lokal.
+7. Controller dapat mengirim command tap, swipe, text, back, dan home melalui
+   signaling WebSocket setelah session disetujui.
 
 Yang belum ada:
 
@@ -278,14 +281,12 @@ Yang belum ada:
 - pengiriman frame layar;
 - video renderer pada controller;
 - data channel;
-- command tap/swipe/input;
-- acknowledgment command;
 - metrik latency dan kualitas koneksi.
 
 Tombol atau pesan “menunggu koneksi media” tidak sama dengan koneksi media
 yang sudah aktif.
 
-### B. Kontrol remote belum terhubung
+### B. Kontrol remote melalui WebRTC belum terhubung
 
 Accessibility Service menerima command remote melalui signaling WebSocket
 terautentikasi:
