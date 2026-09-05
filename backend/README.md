@@ -6,7 +6,7 @@ monorepo terpisah dari project Android native.
 
 ## Menjalankan lokal
 
-1. Salin `backend/.env.example` menjadi `backend/.env`.
+1. Salin `backend/.env.example` menjadi `.env` di root repository.
 2. Isi `DATABASE_URL` dan `JWT_SECRET` tanpa memasukkannya ke Git.
 3. Buat database PostgreSQL yang kosong.
 4. Jalankan:

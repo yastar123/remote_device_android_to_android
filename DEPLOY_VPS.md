@@ -164,18 +164,19 @@ repository, command yang tersimpan, atau dokumen ini.
 
 ## 6. Buat environment backend
 
-Salin template environment:
+Salin template environment ke root repository. Prisma CLI dan process PM2
+menjalankan project dari root, sehingga keduanya membaca file `.env` ini:
 
 ```bash
 cd /root/linkdroid-backend
-cp backend/.env.example backend/.env
-chmod 600 backend/.env
+cp backend/.env.example .env
+chmod 600 .env
 ```
 
 Edit file dengan editor server:
 
 ```bash
-vi backend/.env
+vi .env
 ```
 
 Isi minimal production:
@@ -198,7 +199,7 @@ Untuk membuat secret acak tanpa menampilkan nilainya ke dokumen:
 openssl rand -base64 48
 ```
 
-Simpan nilai yang dihasilkan langsung ke `backend/.env`. Jangan menyalin nilai
+Simpan nilai yang dihasilkan langsung ke `.env`. Jangan menyalin nilai
 secret ke chat, commit, issue, atau log.
 
 ### Konfigurasi TURN opsional
@@ -557,15 +558,16 @@ sertifikat, dan routing domain.
 ```bash
 cd /root/linkdroid-backend
 node --version
+test -s .env && stat -c '%a %n' .env
 npm run backend:build
 pm2 logs linkdroid-backend --lines 200
 ```
 
-Jangan menampilkan isi `backend/.env` di terminal recording, log, atau chat.
+Jangan menampilkan isi `.env` di terminal recording, log, atau chat.
 Periksa keberadaan key tanpa mencetak nilainya, misalnya:
 
 ```bash
-test -s backend/.env && stat -c '%a %n' backend/.env
+test -s .env && stat -c '%a %n' .env
 ```
 
 ### Health check database `503`
@@ -603,7 +605,7 @@ berjalan. Source Android saat ini belum memiliki implementasi WebRTC
 - [ ] Repository berada di `/root/linkdroid-backend`.
 - [ ] PostgreSQL service aktif.
 - [ ] Database `linkdroid_db` dan user `linkdroid` tersedia.
-- [ ] `backend/.env` dibuat dengan permission `600`.
+- [ ] `.env` root dibuat dengan permission `600`.
 - [ ] `DATABASE_URL` dan `JWT_SECRET` valid.
 - [ ] TURN credential hanya diisi jika sudah dikonfirmasi.
 - [ ] `npm ci` berhasil.
