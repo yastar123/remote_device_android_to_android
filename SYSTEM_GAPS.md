@@ -79,19 +79,23 @@ Source Android menyediakan:
 
 ### Penyimpanan lokal
 
-Aplikasi menggunakan `Activity.getPreferences(MODE_PRIVATE)` untuk menyimpan:
+Aplikasi menggunakan `Activity.getPreferences(MODE_PRIVATE)` untuk menyimpan
+metadata lokal non-secret:
 
 - email;
 - role;
-- access token;
-- refresh token;
 - ID device lokal;
 - daftar device lokal;
 - preferensi notifikasi.
 
+Access token dan refresh token disimpan terpisah oleh `SecureTokenStore.kt`
+dengan enkripsi Android Keystore. Jika instalasi lama masih memiliki token di
+preferences, token tersebut dimigrasikan satu kali lalu dihapus dari lokasi
+lama.
+
 Daftar device lokal disimpan sebagai `StringSet` dengan data yang digabung
-menggunakan separator `~`. Belum ada Room, database lokal, migrasi format,
-atau enkripsi khusus untuk penyimpanan tersebut.
+menggunakan separator `~`. Belum ada Room, database lokal, atau migrasi format
+untuk metadata tersebut.
 
 ID device lokal dibuat sekali menggunakan angka acak 9 digit dan disimpan di
 preferences aplikasi. ID ini bukan kredensial akses; backend tetap memerlukan
@@ -440,6 +444,12 @@ Health check tersebut tidak membuktikan bahwa PM2, Nginx, HTTPS, TURN, atau
 database production di VPS sudah aktif. Validasi lokal juga menggunakan secret
 validasi sementara untuk proses tersebut; secret production tetap harus diisi
 sendiri pada `.env` VPS.
+
+Pada database lokal yang belum menjalankan migration, server tetap start dan
+`/health` tetap dapat menjawab, tetapi scheduler expiry memberi peringatan bahwa
+tabel `RemoteSession` belum tersedia. Jalankan
+`npm run backend:prisma:migrate` pada database target sebelum memakai lifecycle
+session di environment tersebut.
 
 ## 9. Status deployment
 
