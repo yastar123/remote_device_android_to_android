@@ -5,7 +5,7 @@ dan bagian yang masih kurang dari sistem LinkDroid Android native berbasis
 Kotlin. Dokumen ini menjadi checklist sebelum aplikasi digunakan untuk
 dukungan remote antarperangkat secara nyata.
 
-**Pembaruan terakhir:** 4 September 2026
+**Pembaruan terakhir:** 5 September 2026
 **Struktur repository:** satu repository dengan satu project Gradle Android
 sebagai source of truth di `artifacts/linkdroid-android/native-kotlin/`
 **Endpoint produksi yang disiapkan:** `https://103-245-38-142.sslip.io`
@@ -20,7 +20,23 @@ Fondasi aplikasi Android yang sudah tersedia:
 
 - Aplikasi native Kotlin dengan Jetpack Compose.
 - Login lokal/demo dengan validasi email dan panjang password.
+- Pilihan peran lokal `Admin` atau `Petugas` saat login.
 - Navigasi Beranda, Perangkat, Sesi Remote, dan Pengaturan.
+- Dashboard Admin untuk memasukkan ID device petugas dan memulai permintaan
+  pemantauan.
+- Beranda Petugas yang menampilkan ID device lokal untuk dibagikan kepada Admin.
+- Form Data pelanggan untuk:
+  - Nama Lengkap Pelanggan sesuai KTP/Rekening Listrik.
+  - Nomor Meter / ID Pelanggan (IDPEL) 11–12 digit.
+  - Alamat Lengkap.
+  - Desa / Kelurahan.
+  - Kecamatan.
+  - Kabupaten / Kota.
+  - Provinsi melalui dropdown.
+- Tombol `Demo ID` untuk mengisi contoh IDPEL `532819004521`.
+- Validasi form dan tombol `Kembali` serta `Simpan & Lanjut`.
+- Layar tahap PLN Mobile dengan status data siap diproses dan kontrol
+  MediaProjection untuk berbagi layar.
 - Penyimpanan daftar perangkat secara lokal menggunakan `SharedPreferences`,
   termasuk penambahan, pencegahan ID duplikat, koneksi dari daftar, dan hapus.
 - ID perangkat lokal dibuat sekali saat instalasi dan ditampilkan saat berbagi,
@@ -39,7 +55,8 @@ Fondasi aplikasi Android yang sudah tersedia:
 
 Namun, aplikasi belum menjadi sistem remote-support end-to-end. Sebagian alur
 masih berjalan sebagai state lokal di satu perangkat dan belum berkomunikasi
-dengan perangkat Android lain.
+dengan perangkat Android lain. Data pelanggan yang diisi juga belum dikirim ke
+Admin atau disimpan ke server.
 
 ## Matriks kesiapan launch
 
@@ -48,8 +65,11 @@ dengan perangkat Android lain.
 | Repository | Siap secara struktur | Satu repo dengan satu project Gradle Android sebagai source aplikasi; folder metadata artefak import bukan source backend atau web. |
 | Konfigurasi build | Tersedia | `.replit` menjalankan `gradle assembleDebug` dan Java/Gradle tersedia. |
 | Build APK | Gagal di environment ini | Build berhenti sebelum kompilasi karena `ANDROID_HOME`/`ANDROID_SDK_ROOT` tidak ada dan Android SDK platform 35 tidak tersedia. |
-| UI/menu | Terimplementasi, belum diuji runtime | Kode memiliki Login, Beranda, Perangkat, Sesi Remote, dan Pengaturan, tetapi belum ada APK/emulator untuk membuktikan alurnya berjalan. |
-| Login produksi | Belum siap | Masih validasi dan penyimpanan lokal/demo. |
+| UI/menu | Terimplementasi, belum diuji runtime | Kode memiliki login Admin/Petugas, dashboard monitoring, form data pelanggan, tahap PLN Mobile, Perangkat, Sesi Remote, dan Pengaturan, tetapi belum ada APK/emulator untuk membuktikan alurnya berjalan. |
+| Login produksi | Belum siap | Pilihan role, email, dan password masih validasi serta penyimpanan lokal/demo; belum ada akun atau otorisasi server. |
+| Form data pelanggan | UI dan validasi tersedia, pengiriman belum ada | Field dan validasi IDPEL sudah tersedia, tetapi data hanya berada di state Activity dan belum diterima Admin atau disimpan backend. |
+| Alur Admin–Petugas | UI lokal tersedia, antar-device belum ada | Admin dapat memasukkan ID device dan Petugas dapat melihat ID device, tetapi permintaan sesi belum dikirim ke device lain. |
+| Tahap PLN Mobile | Layar panduan tersedia | Aplikasi belum membuka, membaca, atau memverifikasi status aplikasi PLN Mobile; penyelesaian masih manual. |
 | Device registration | Client tersedia, server belum siap | APK mencoba registrasi otomatis, tetapi endpoint backend belum dapat dihubungi dan belum ada autentikasi/pairing server. |
 | Screen capture lokal | Terimplementasi, belum diuji perangkat | MediaProjection dan foreground service sudah dibuat; belum ada pengiriman frame dan belum diverifikasi di perangkat fisik. |
 | Remote control | Belum siap | Accessibility Service tersedia, tetapi belum menerima command dari peer. |
@@ -66,23 +86,29 @@ Kode dimaksudkan untuk mendukung alur berikut setelah APK berhasil dibuat dan
 dijalankan pada emulator/perangkat:
 
 1. Masuk menggunakan email valid dan password minimal 6 karakter, atau tombol
-   `Coba demo`.
-2. Membuka setiap menu bawah: `Beranda`, `Perangkat`, dan `Pengaturan`.
-3. Menambahkan perangkat dengan nama dan ID 9 digit, mencegah duplikat,
+   `Coba demo`, lalu memilih role `Admin` atau `Petugas`.
+2. Sebagai Admin, memasukkan ID device Petugas pada dashboard Monitoring dan
+   menekan `Hubungkan & Pantau`.
+3. Sebagai Petugas, melihat ID device lokal dan membagikannya kepada Admin.
+4. Sebagai Petugas, membuka formulir dan mengisi nama pelanggan, IDPEL, alamat,
+   desa/kelurahan, kecamatan, kabupaten/kota, dan provinsi.
+5. Menggunakan `Demo ID` untuk mengisi IDPEL contoh, memilih provinsi dari
+   dropdown, lalu menekan `Simpan & Lanjut`.
+6. Melihat ringkasan data pada tahap PLN Mobile dan meminta izin MediaProjection
+   untuk berbagi layar.
+7. Membuka setiap menu bawah sesuai role: Admin memiliki `Monitoring`,
+   `Perangkat`, dan `Pengaturan`; Petugas memiliki `Tugas` dan `Pengaturan`.
+8. Menambahkan perangkat dengan nama dan ID 9 digit, mencegah duplikat,
    memulai sesi lokal dari perangkat online, dan menghapus perangkat tersimpan.
-4. Membuat ID perangkat lokal yang persisten dan membagikannya melalui Android
-   share sheet.
-5. Meminta izin MediaProjection, menyalakan/mematikan foreground capture, dan
-   menghentikannya dari menu Sesi Remote atau Pengaturan.
-6. Membuka pengaturan Accessibility Service Android dan membaca statusnya saat
-   kembali ke aplikasi.
-7. Mengaktifkan/mematikan notifikasi sesi, mengakhiri sesi, dan logout.
+9. Menyalakan/mematikan foreground capture, mengelola Accessibility Service,
+   mengaktifkan/mematikan notifikasi sesi, mengakhiri sesi, dan logout.
 
 Daftar di atas adalah kemampuan yang terlihat dari source code, bukan hasil
-pengujian berhasil pada perangkat. Pengujian di atas juga belum berarti remote
-support antarperangkat sudah bekerja:
-alur koneksi saat ini hanya mengubah state lokal sampai backend dan transport
-real-time tersedia.
+pengujian berhasil pada perangkat. Pengujian di atas juga belum berarti alur
+Admin–Petugas atau remote support antarperangkat sudah bekerja. Tombol
+`Hubungkan & Pantau` saat ini hanya mengubah state lokal sampai backend dan
+transport real-time tersedia. Data pelanggan juga hilang dari state aplikasi
+ketika proses Activity tidak lagi menyimpan state tersebut.
 
 ### Bukti verifikasi environment terakhir
 
@@ -194,7 +220,7 @@ Sistem produksi membutuhkan provider autentikasi atau backend yang aman.
 ### 6. Device ID belum terdaftar ke server
 
 ID perangkat utama sekarang dibuat lokal sekali dan disimpan di preferences,
-t tetapi belum memiliki identitas server yang terverifikasi. APK sekarang
+tetapi belum memiliki identitas server yang terverifikasi. APK sekarang
 mencoba mendaftarkan device ke endpoint pada bagian kontrak di atas, namun
 server belum merespons sukses. Daftar perangkat awal tetap berupa data demo.
 Belum ada:
