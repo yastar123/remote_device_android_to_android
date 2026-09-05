@@ -33,14 +33,14 @@ di dalam artifact Android.
 | Backend Express | Ada dan berhasil dibuild lokal | Tetap wajib memiliki environment dan PostgreSQL aktif saat dijalankan. |
 | Prisma schema dan migration | Ada; Prisma Client berhasil dibuat lokal | Migration belum diterapkan ke database production dari workspace ini. |
 | JWT access/refresh token | Ada di backend dan client | Client memakai Keystore, refresh otomatis, rotasi, dan logout. |
-| Device registration dan heartbeat | Ada di backend/client utama | Belum ada bukti backend production aktif. |
-| REST session lifecycle | Ada | Sesi mengatur request, approval, active, reject, end, dan expiry; keberhasilan lintas dua device belum dibuktikan. |
+| Device registration dan heartbeat | Ada di backend/client utama | Daftar device Android kini disinkronkan dari backend; belum ada bukti backend production aktif. |
+| REST session lifecycle | Ada dengan guard transisi status | Sesi mengatur request, approval, active, reject, end, dan expiry; keberhasilan lintas dua device belum dibuktikan. |
 | WebSocket signaling relay | Ada dengan ping, aktivasi, reconnect, SDP/ICE relay, command, dan acknowledgment | Signaling bukan media transport; koneksi WebRTC tetap perlu diuji pada dua device dan jaringan nyata. |
 | Screen capture lokal | Ada | Mode legacy hanya membaca lalu membuang frame; mode WebRTC membuat screen video track, tetapi belum teruji dua device. |
 | Accessibility service | Ada dan menerima command remote | Command tap, swipe, text, back, dan home divalidasi, dibatasi pada session, serta mengembalikan acknowledgment melalui signaling WebSocket. |
 | WebRTC/video | Ada implementasinya | Android memiliki `PeerConnection`, screen video track, offer/answer, ICE candidate, renderer controller, dan data channel; belum ada bukti runtime dua device. |
 | Audio remote | Tidak ada | Tidak ada audio source, audio track, atau audio renderer. |
-| Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif. |
+| Workflow Replit | Belum dikonfigurasi | File `.replit` punya run command, tetapi snapshot project tidak memiliki workflow aktif; build Android juga membutuhkan SDK yang tidak disimpan di repo. |
 | Release build/signing | Belum ada | Belum ada keystore, signing config, AAB, atau pipeline release. |
 
 ## 3. Aplikasi Android yang sudah tersedia
@@ -84,6 +84,7 @@ metadata lokal non-secret:
 - role;
 - ID device lokal;
 - daftar device lokal;
+- draft data pelanggan yang sedang diisi;
 - preferensi notifikasi.
 
 Access token dan refresh token disimpan terpisah oleh `SecureTokenStore.kt`
@@ -184,6 +185,7 @@ Endpoint dengan Bearer access token:
 - `POST /api/v1/tasks` — khusus `WORKER`.
 - `GET /api/v1/tasks`.
 - `PATCH /api/v1/tasks/:id/status`.
+- `GET /api/v1/audit-logs` — khusus `ADMIN`, dengan filter action dan cursor.
 - `GET /api/v1/turn/credentials`.
 
 Backend juga memasang Helmet, CORS, body size limit `128kb`, rate limit umum,
@@ -209,8 +211,10 @@ idle akan diubah menjadi `EXPIRED`, dicatat ke audit log, dan diberitahukan ke
 participant.
 
 Audit log ditulis untuk event register user, register/revoke device, request/
-approve/reject/end session, create task, dan perubahan status task. Belum ada
-fitur UI atau endpoint khusus untuk menampilkan audit log.
+approve/reject/end session, create task, dan perubahan status task. Endpoint
+admin untuk mengambil audit log dan pagination cursor sudah tersedia, dan
+dashboard Admin menampilkan aktivitas terbaru. Filter lanjutan dan export audit
+log belum tersedia.
 
 ### WebSocket signaling
 
@@ -336,20 +340,21 @@ akun.
 ### D. Lifecycle sesi belum tahan terhadap process death
 
 State utama session, screen sharing, task yang baru dibuat, dan pesan UI berada
-di state Activity/Compose. Metadata session ID, peer device ID, dan role kini
-dipersist ke preferences dan dipulihkan setelah recreation/process death.
-Pemulihan penuh capture service, token refresh lintas process, dan task draft
-masih belum tersedia.
+di state Activity/Compose. Metadata session ID, peer device ID, role, daftar
+device server, dan draft data pelanggan kini dipersist atau disinkronkan.
+Pemulihan penuh capture service, token refresh lintas process, dan koneksi
+WebRTC setelah process death masih belum tersedia.
 
 Backend sudah memiliki scheduler expiry dan client sudah memiliki retry/backoff
 WebSocket. Yang masih belum selesai adalah pemulihan penuh state session,
-screen sharing, dan task setelah process death atau service berjalan terpisah.
+screen sharing, WebRTC, dan service setelah process death atau service berjalan
+terpisah.
 
 ### E. Notifikasi masih dasar
 
 Notifikasi permission diminta pada Android 13+. Aplikasi dapat membuat
-notifikasi lokal untuk status menunggu sesi dan foreground notification untuk
-screen capture.
+notifikasi lokal untuk status menunggu sesi, request monitoring masuk, sesi
+aktif/berakhir, dan foreground notification untuk screen capture.
 
 Belum ada:
 

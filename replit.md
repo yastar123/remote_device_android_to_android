@@ -35,8 +35,9 @@ Domain TLS yang disiapkan untuk integrasi backend adalah:
 Backend Node.js, skema Prisma, API auth/device/task/session, dan relay WebSocket
 signaling tersedia di `backend/`. Backend harus listen di `127.0.0.1:3000` agar
 sesuai dengan Nginx. Integrasi Android dengan token, WebSocket signaling, dan
-WebRTC media masih perlu diselesaikan sebelum tombol `Hubungkan` menjadi koneksi
-video/control antarperangkat yang benar-benar aktif.
+WebRTC video/data channel sudah tersedia di source. Koneksi dua perangkat, TURN,
+dan pemulihan setelah gangguan jaringan tetap perlu diuji sebelum tombol
+`Hubungkan` dianggap siap untuk penggunaan production.
 
 ## Alur monitoring petugas
 
@@ -72,15 +73,17 @@ video/control antarperangkat yang benar-benar aktif.
 
 ## Command remote dan pemulihan sesi
 
-Setelah session disetujui, controller dapat mengirim command aksesibilitas
-melalui WebSocket signaling terautentikasi. Backend membatasi command ke device
-receiver pada session `APPROVED` atau `ACTIVE`, memvalidasi payload, dan
-mengembalikan hasil atau timeout. Receiver harus mengaktifkan Accessibility
-Service Android agar gesture/global action dapat dijalankan.
+Setelah session disetujui, controller mengirim command aksesibilitas melalui
+WebRTC data channel jika tersedia, dengan fallback ke WebSocket signaling
+terautentikasi. Backend membatasi command signaling ke device receiver pada
+session `APPROVED` atau `ACTIVE`, memvalidasi payload, dan mengembalikan hasil
+atau timeout. Receiver harus mengaktifkan Accessibility Service Android agar
+gesture/global action dapat dijalankan.
 
-Metadata session ID, device pasangan, dan role disimpan di preferences sehingga
-Activity dapat memulihkan session setelah recreation atau process death. Ini
-belum memulihkan capture service atau koneksi media WebRTC.
+Metadata session ID, device pasangan, role, dan draft data pelanggan disimpan di
+preferences sehingga Activity dapat memulihkan state setelah recreation atau
+process death. Capture service dan koneksi media WebRTC tetap perlu dipulihkan
+secara eksplisit setelah proses benar-benar mati.
 
 ## Prinsip keamanan
 

@@ -46,6 +46,22 @@ data class BackendTaskSummary(
     val status: String,
 )
 
+data class BackendDeviceSummary(
+    val deviceId: String,
+    val name: String,
+    val androidVersion: String?,
+    val appVersion: String?,
+    val lastSeenAt: String?,
+)
+
+data class BackendAuditLogSummary(
+    val action: String,
+    val entityType: String,
+    val entityId: String,
+    val createdAt: String,
+    val actorEmail: String?,
+)
+
 data class BackendIceServer(
     val urls: List<String>,
     val username: String?,
@@ -92,6 +108,25 @@ object BackendApiClient {
             "POST",
             accessToken,
         )
+    }
+
+    suspend fun listDevices(baseUrl: String, accessToken: String): List<BackendDeviceSummary> {
+        val response = request(baseUrl, "/api/v1/devices", "GET", accessToken)
+        val devices = response.optJSONArray("devices") ?: JSONArray()
+        return buildList {
+            for (index in 0 until devices.length()) {
+                val device = devices.getJSONObject(index)
+                add(
+                    BackendDeviceSummary(
+                        deviceId = device.getString("deviceId"),
+                        name = device.getString("name"),
+                        androidVersion = device.optString("androidVersion").takeIf { it.isNotBlank() },
+                        appVersion = device.optString("appVersion").takeIf { it.isNotBlank() },
+                        lastSeenAt = device.optString("lastSeenAt").takeIf { it.isNotBlank() },
+                    ),
+                )
+            }
+        }
     }
 
     suspend fun createSession(
@@ -166,6 +201,25 @@ object BackendApiClient {
                         city = task.getString("city"),
                         province = task.getString("province"),
                         status = task.getString("status"),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun listAuditLogs(baseUrl: String, accessToken: String): List<BackendAuditLogSummary> {
+        val response = request(baseUrl, "/api/v1/audit-logs?limit=20", "GET", accessToken)
+        val logs = response.optJSONArray("logs") ?: JSONArray()
+        return buildList {
+            for (index in 0 until logs.length()) {
+                val log = logs.getJSONObject(index)
+                add(
+                    BackendAuditLogSummary(
+                        action = log.getString("action"),
+                        entityType = log.getString("entityType"),
+                        entityId = log.getString("entityId"),
+                        createdAt = log.getString("createdAt"),
+                        actorEmail = log.optJSONObject("actor")?.optString("email")?.takeIf { it.isNotBlank() },
                     ),
                 )
             }

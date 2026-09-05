@@ -132,6 +132,7 @@ class MainActivity : ComponentActivity() {
         var adminTasks by remember { mutableStateOf<List<BackendTaskSummary>>(emptyList()) }
         val registrationScope = rememberCoroutineScope()
         val currentDeviceId = remember { getOrCreateDeviceId() }
+        var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
         suspend fun <T> withAuthenticatedApi(operation: suspend (String) -> T): T {
             val currentAccessToken = accessToken
                 ?: throw IllegalStateException("Login server diperlukan.")
@@ -150,9 +151,43 @@ class MainActivity : ComponentActivity() {
             }
             return result.value
         }
-        var devices by remember(currentDeviceId) { mutableStateOf(loadDevices(currentDeviceId)) }
+        val refreshRegisteredDevices: () -> Unit = {
+            val token = accessToken
+            if (!token.isNullOrBlank()) {
+                registrationScope.launch {
+                    runCatching {
+                        withAuthenticatedApi { currentToken ->
+                            BackendApiClient.listDevices(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = currentToken,
+                            )
+                        }
+                    }.onSuccess { serverDevices ->
+                        val synchronized = serverDevices.map { device ->
+                            Device(
+                                id = formatDeviceId(device.deviceId),
+                                name = device.name,
+                                platform = listOfNotNull(device.androidVersion, device.appVersion?.let { "app $it" })
+                                    .joinToString(" • ")
+                                    .ifBlank { "Android" },
+                                online = isRecentlySeen(device.lastSeenAt),
+                            )
+                        }.toMutableList()
+                        if (synchronized.none { it.id == currentDeviceId }) {
+                            synchronized += Device(currentDeviceId, "Perangkat ini", "Android • Perangkat ini", true)
+                        }
+                        devices = synchronized
+                            .distinctBy { it.id }
+                            .map { if (it.id == currentDeviceId) it.copy(online = true) else it }
+                        saveDevices(devices)
+                    }
+                }
+            }
+        }
         var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
         var submittedCustomer by remember { mutableStateOf<CustomerData?>(null) }
+        var customerDraft by remember { mutableStateOf(loadCustomerDraft()) }
+        var adminAuditLogs by remember { mutableStateOf<List<BackendAuditLogSummary>>(emptyList()) }
         val sessionCoordinator = remember {
             RemoteSessionCoordinator(getPreferences(MODE_PRIVATE))
         }
@@ -204,6 +239,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }.onSuccess {
                         registrationStatus = "Device sudah terdaftar di server."
+                        refreshRegisteredDevices()
                     }.onFailure { error ->
                         registrationStatus = "Pendaftaran gagal: ${error.message ?: "server tidak dapat dihubungi"}"
                     }
@@ -222,6 +258,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }.onSuccess { adminTasks = it }
                         .onFailure { message = "Data tugas gagal dimuat: ${it.message ?: "server tidak dapat dihubungi"}" }
+                    runCatching {
+                        withAuthenticatedApi { token ->
+                            BackendApiClient.listAuditLogs(
+                                baseUrl = BuildConfig.BACKEND_BASE_URL,
+                                accessToken = token,
+                            )
+                        }
+                    }.onSuccess { adminAuditLogs = it }
                 }
             }
         }
@@ -264,6 +308,7 @@ class MainActivity : ComponentActivity() {
             activeRemoteSession?.sessionId,
             projectionPermission,
             backendIceServers,
+            notificationsEnabled,
         ) {
             val token = accessToken
             val currentSession = activeRemoteSession
@@ -313,6 +358,9 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread {
                                 pendingIncomingSession = session
                                 message = "Permintaan monitoring baru dari ${session.requesterEmail}."
+                                if (notificationsEnabled) {
+                                    showSessionNotification("Permintaan monitoring dari ${session.requesterEmail}.")
+                                }
                             }
                         }
 
@@ -320,12 +368,17 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread {
                                 if (type == "session.approved" || type == "session.active") {
                                     message = "Permintaan monitoring disetujui petugas."
+                                    if (notificationsEnabled) {
+                                        showSessionNotification("Sesi monitoring aktif.")
+                                    }
                                     webRtc.beginNegotiation()
                                 } else if (type == "session.rejected") {
                                     message = "Permintaan monitoring ditolak petugas."
+                                    cancelSessionNotification()
                                     activeSession = null
                                 } else if (type == "session.ended" || type == "session.expired") {
                                     message = "Sesi monitoring telah dihentikan."
+                                    cancelSessionNotification()
                                     activeSession = null
                                     sessionCoordinator.stop()
                                 }
@@ -556,6 +609,7 @@ class MainActivity : ComponentActivity() {
                         activeSession = activeSession,
                         message = message,
                         tasks = adminTasks,
+                        auditLogs = adminAuditLogs,
                         onConnect = startRemoteSession,
                         onRefreshTasks = loadAdminTasks,
                         modifier = Modifier.padding(padding),
@@ -565,10 +619,13 @@ class MainActivity : ComponentActivity() {
                         email = email.orEmpty(),
                         deviceId = currentDeviceId,
                         submittedCustomer = submittedCustomer,
+                        hasCustomerDraft = customerDraft != null,
                         activeSession = activeSession,
                         pendingSession = pendingIncomingSession,
                         onStartForm = { screen = AppScreen.CUSTOMER_FORM },
-                        onContinue = { screen = AppScreen.PLN_MOBILE },
+                        onContinue = {
+                            screen = if (submittedCustomer != null) AppScreen.PLN_MOBILE else AppScreen.CUSTOMER_FORM
+                        },
                         onShareId = { shareDeviceId(currentDeviceId) },
                         onApproveSession = { incoming ->
                             val token = accessToken
@@ -625,8 +682,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 AppScreen.CUSTOMER_FORM -> CustomerFormScreen(
-                    initialData = submittedCustomer,
+                    initialData = customerDraft ?: submittedCustomer,
                     onBack = { screen = AppScreen.HOME },
+                    onDraftChanged = {
+                        customerDraft = it
+                        saveCustomerDraft(it)
+                    },
                     onSubmit = {
                         if (accessToken.isNullOrBlank()) {
                             message = "Login server diperlukan sebelum menyimpan data pelanggan."
@@ -645,6 +706,8 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }.onSuccess { taskId ->
                                     submittedCustomer = it
+                                    customerDraft = null
+                                    clearCustomerDraft()
                                     submittedTaskId = taskId
                                     runCatching {
                                         withAuthenticatedApi { token ->
@@ -801,12 +864,14 @@ class MainActivity : ComponentActivity() {
                             .remove("role")
                             .apply()
                         secureTokenStore.clearTokens()
+                        clearCustomerDraft()
                         email = null
                         accessToken = null
                         refreshToken = null
                         role = UserRole.ADMIN
                         activeSession = null
                         submittedCustomer = null
+                        customerDraft = null
                         submittedTaskId = null
                         submittingTask = false
                         pendingIncomingSession = null
@@ -905,6 +970,49 @@ class MainActivity : ComponentActivity() {
         ).apply()
     }
 
+    private fun loadCustomerDraft(): CustomerData? {
+        val preferences = getPreferences(MODE_PRIVATE)
+        if (!preferences.contains("draft_full_name") &&
+            !preferences.contains("draft_meter_id") &&
+            !preferences.contains("draft_address")
+        ) {
+            return null
+        }
+        return CustomerData(
+            fullName = preferences.getString("draft_full_name", "").orEmpty(),
+            meterId = preferences.getString("draft_meter_id", "").orEmpty(),
+            address = preferences.getString("draft_address", "").orEmpty(),
+            village = preferences.getString("draft_village", "").orEmpty(),
+            district = preferences.getString("draft_district", "").orEmpty(),
+            city = preferences.getString("draft_city", "").orEmpty(),
+            province = preferences.getString("draft_province", "Pilih provinsi").orEmpty(),
+        )
+    }
+
+    private fun saveCustomerDraft(draft: CustomerData) {
+        getPreferences(MODE_PRIVATE).edit()
+            .putString("draft_full_name", draft.fullName)
+            .putString("draft_meter_id", draft.meterId)
+            .putString("draft_address", draft.address)
+            .putString("draft_village", draft.village)
+            .putString("draft_district", draft.district)
+            .putString("draft_city", draft.city)
+            .putString("draft_province", draft.province)
+            .apply()
+    }
+
+    private fun clearCustomerDraft() {
+        getPreferences(MODE_PRIVATE).edit()
+            .remove("draft_full_name")
+            .remove("draft_meter_id")
+            .remove("draft_address")
+            .remove("draft_village")
+            .remove("draft_district")
+            .remove("draft_city")
+            .remove("draft_province")
+            .apply()
+    }
+
     companion object {
         private const val SESSION_NOTIFICATION_CHANNEL = "linkdroid-session-status"
         private const val SESSION_NOTIFICATION_ID = 1002
@@ -929,9 +1037,14 @@ data class CustomerData(
 
 private fun defaultDevices(currentDeviceId: String) = listOf(
     Device(currentDeviceId, "Perangkat ini", "Android • Perangkat ini", true),
-    Device("221 095 648", "Xiaomi Pad 6", "Android 13 • 2 jam lalu", false),
-    Device("731 440 219", "Galaxy S23", "Android 14 • Aktif sekarang", true),
 )
+
+private fun isRecentlySeen(lastSeenAt: String?): Boolean =
+    lastSeenAt?.let {
+        runCatching {
+            java.time.Instant.parse(it).isAfter(java.time.Instant.now().minusSeconds(120))
+        }.getOrDefault(false)
+    } ?: false
 
 private object LinkDroidColors {
     val background = Color(0xFFF7F9FC)
@@ -1090,6 +1203,7 @@ private fun AdminDashboardScreen(
     activeSession: String?,
     message: String?,
     tasks: List<BackendTaskSummary>,
+    auditLogs: List<BackendAuditLogSummary>,
     onConnect: (String) -> Unit,
     onRefreshTasks: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1168,6 +1282,24 @@ private fun AdminDashboardScreen(
                 }
             }
         }
+        SectionTitle("Audit aktivitas terbaru")
+        if (auditLogs.isEmpty()) {
+            Text("Belum ada audit log yang dapat ditampilkan.", color = LinkDroidColors.muted)
+        } else {
+            auditLogs.take(10).forEach { log ->
+                Card(colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(log.action, fontWeight = FontWeight.Medium)
+                        Text("${log.entityType} • ${log.entityId.take(8)}", color = LinkDroidColors.muted)
+                        Text(
+                            "${log.actorEmail ?: "system"} • ${log.createdAt.replace("T", " ").take(19)}",
+                            color = LinkDroidColors.muted,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
         SectionTitle("Alur kerja")
         WorkflowStep("1", "Hubungkan device", "Masukkan ID device petugas.")
         WorkflowStep("2", "Petugas mengisi data", "Data pelanggan diisi langsung di perangkat petugas.")
@@ -1203,6 +1335,7 @@ private fun WorkerHomeScreen(
     email: String,
     deviceId: String,
     submittedCustomer: CustomerData?,
+    hasCustomerDraft: Boolean,
     activeSession: String?,
     pendingSession: IncomingSession?,
     onStartForm: () -> Unit,
@@ -1268,16 +1401,26 @@ private fun WorkerHomeScreen(
                 HorizontalDivider()
                 Text("Status tugas", fontWeight = FontWeight.Medium)
                 Text(
-                    if (submittedCustomer == null) "Belum dimulai" else "Data tersimpan, lanjut ke PLN Mobile",
-                    color = if (submittedCustomer == null) LinkDroidColors.muted else LinkDroidColors.success,
+                    when {
+                        submittedCustomer != null -> "Data tersimpan, lanjut ke PLN Mobile"
+                        hasCustomerDraft -> "Draft tersimpan di perangkat ini"
+                        else -> "Belum dimulai"
+                    },
+                    color = if (submittedCustomer != null || hasCustomerDraft) LinkDroidColors.success else LinkDroidColors.muted,
                 )
             }
         }
         Button(
-            onClick = if (submittedCustomer == null) onStartForm else onContinue,
+            onClick = if (submittedCustomer == null || hasCustomerDraft) onStartForm else onContinue,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (submittedCustomer == null) "Mulai input data" else "Lanjutkan ke PLN Mobile")
+            Text(
+                when {
+                    submittedCustomer != null -> "Lanjutkan ke PLN Mobile"
+                    hasCustomerDraft -> "Lanjutkan draft"
+                    else -> "Mulai input data"
+                },
+            )
         }
         Notice("Admin dapat memantau layar perangkat ini setelah Anda memberikan ID device dan menyetujui permintaan sesi.")
     }
@@ -1287,6 +1430,7 @@ private fun WorkerHomeScreen(
 private fun CustomerFormScreen(
     initialData: CustomerData?,
     onBack: () -> Unit,
+    onDraftChanged: (CustomerData) -> Unit,
     onSubmit: (CustomerData) -> Unit,
     isSubmitting: Boolean,
     modifier: Modifier = Modifier,
@@ -1300,15 +1444,28 @@ private fun CustomerFormScreen(
     var province by rememberSaveable(initialData) { mutableStateOf(initialData?.province ?: "Pilih provinsi") }
     var provinceMenuOpen by remember { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    fun emitDraft() {
+        onDraftChanged(
+            CustomerData(
+                fullName = fullName,
+                meterId = meterId,
+                address = address,
+                village = village,
+                district = district,
+                city = city,
+                province = province,
+            ),
+        )
+    }
 
     Page(modifier) {
         Header("Data pelanggan", "Isi sesuai KTP atau rekening listrik")
         Text("Data ini akan diproses di perangkat petugas dan dipantau admin.", color = LinkDroidColors.muted)
-        FormField("Nama Lengkap Pelanggan", fullName, { fullName = it; error = null }, "Sesuai KTP/Rekening Listrik")
+        FormField("Nama Lengkap Pelanggan", fullName, { fullName = it; error = null; emitDraft() }, "Sesuai KTP/Rekening Listrik")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             OutlinedTextField(
                 value = meterId,
-                onValueChange = { meterId = it.filter(Char::isDigit).take(12); error = null },
+                onValueChange = { meterId = it.filter(Char::isDigit).take(12); error = null; emitDraft() },
                 label = { Text("Nomor Meter / ID Pelanggan (IDPEL)") },
                 placeholder = { Text("532819004521") },
                 supportingText = { Text("11–12 digit") },
@@ -1320,16 +1477,17 @@ private fun CustomerFormScreen(
                 onClick = {
                     meterId = "532819004521"
                     error = null
+                    emitDraft()
                 },
                 modifier = Modifier.padding(top = 8.dp),
             ) {
                 Text("Demo ID")
             }
         }
-        FormField("Alamat Lengkap", address, { address = it; error = null }, "Nama jalan, nomor rumah, RT/RW", minLines = 2)
-        FormField("Desa / Kelurahan", village, { village = it; error = null }, "Contoh: Sukamaju")
-        FormField("Kecamatan", district, { district = it; error = null }, "Contoh: Setiabudi")
-        FormField("Kabupaten / Kota", city, { city = it; error = null }, "Contoh: Jakarta Selatan")
+        FormField("Alamat Lengkap", address, { address = it; error = null; emitDraft() }, "Nama jalan, nomor rumah, RT/RW", minLines = 2)
+        FormField("Desa / Kelurahan", village, { village = it; error = null; emitDraft() }, "Contoh: Sukamaju")
+        FormField("Kecamatan", district, { district = it; error = null; emitDraft() }, "Contoh: Setiabudi")
+        FormField("Kabupaten / Kota", city, { city = it; error = null; emitDraft() }, "Contoh: Jakarta Selatan")
         Box {
             OutlinedButton(
                 onClick = { provinceMenuOpen = true },
@@ -1354,6 +1512,7 @@ private fun CustomerFormScreen(
                             province = option
                             provinceMenuOpen = false
                             error = null
+                            emitDraft()
                         },
                     )
                 }

@@ -77,6 +77,19 @@ const taskStatusSchema = z.object({
 });
 
 const refreshSchema = z.object({ refreshToken: z.string().min(20) });
+const auditQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().datetime().optional(),
+  action: z.string().trim().min(1).max(80).optional(),
+});
+
+const allowedTaskTransitions: Record<string, string[]> = {
+  DATA_INPUT: ["PLN_MOBILE", "NEEDS_CORRECTION"],
+  PLN_MOBILE: ["IN_REVIEW", "NEEDS_CORRECTION"],
+  IN_REVIEW: ["COMPLETED", "NEEDS_CORRECTION"],
+  NEEDS_CORRECTION: ["DATA_INPUT", "PLN_MOBILE"],
+  COMPLETED: [],
+};
 
 function publicUser(user: { id: string; email: string; role: AuthUser["role"] }) {
   return { id: user.id, email: user.email, role: user.role };
@@ -401,6 +414,14 @@ async function updateSession(request: AuthenticatedRequest, response: Response, 
     response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only a requested session can be approved." });
     return;
   }
+  if (action === "reject" && session.status !== "REQUESTED") {
+    response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only a requested session can be rejected." });
+    return;
+  }
+  if (action === "end" && !["REQUESTED", "APPROVED", "ACTIVE"].includes(session.status)) {
+    response.status(409).json({ error: "INVALID_SESSION_STATE", message: "Only an active session can be ended." });
+    return;
+  }
   const status = action === "approve" ? "APPROVED" : action === "reject" ? "REJECTED" : "ENDED";
   const eventName = action === "approve" ? "approved" : action === "reject" ? "rejected" : "ended";
   const updated = await prisma.remoteSession.update({
@@ -488,6 +509,13 @@ app.patch(
       response.status(404).json({ error: "TASK_NOT_FOUND", message: "Task was not found." });
       return;
     }
+    if (task.status !== body.status && !allowedTaskTransitions[task.status]?.includes(body.status)) {
+      response.status(409).json({
+        error: "INVALID_TASK_TRANSITION",
+        message: `A task cannot move from ${task.status} to ${body.status}.`,
+      });
+      return;
+    }
     const updated = await prisma.customerTask.update({
       where: { id: task.id },
       data: {
@@ -499,6 +527,28 @@ app.patch(
     const target = user.id === task.workerId ? task.adminId : task.workerId;
     if (target) hub.emitToUser(target, { type: "task.status_changed", task: updated });
     response.json({ task: updated });
+  }),
+);
+
+app.get(
+  "/api/v1/audit-logs",
+  requireAuth,
+  requireRole("ADMIN"),
+  asyncRoute(async (request, response) => {
+    const query = auditQuerySchema.parse(request.query);
+    const logs = await prisma.auditLog.findMany({
+      where: {
+        ...(query.action ? { action: query.action } : {}),
+        ...(query.cursor ? { createdAt: { lt: new Date(query.cursor) } } : {}),
+      },
+      include: { actor: { select: { id: true, email: true, role: true } } },
+      orderBy: { createdAt: "desc" },
+      take: query.limit,
+    });
+    response.json({
+      logs,
+      nextCursor: logs.length === query.limit ? logs.at(-1)?.createdAt.toISOString() ?? null : null,
+    });
   }),
 );
 

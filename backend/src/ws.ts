@@ -146,6 +146,10 @@ export class SignalingHub {
         client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_FORBIDDEN" }));
         return;
       }
+      if (this.commandTimeouts.has(message.commandId)) {
+        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_IN_FLIGHT" }));
+        return;
+      }
       this.emitToDevice(session.receiverId, session.receiverDeviceId, {
         type: "session.command",
         sessionId: session.id,
@@ -153,10 +157,6 @@ export class SignalingHub {
         command: message.command,
         fromDeviceId: client.deviceId,
       });
-      if (this.commandTimeouts.has(message.commandId)) {
-        client.socket.send(JSON.stringify({ type: "error", error: "COMMAND_IN_FLIGHT" }));
-        return;
-      }
       const timeout = setTimeout(() => {
         const pending = this.commandTimeouts.get(message.commandId);
         if (!pending || pending.sessionId !== session.id) return;
