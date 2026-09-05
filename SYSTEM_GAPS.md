@@ -10,9 +10,81 @@ dukungan remote antarperangkat secara nyata.
 sebagai source of truth di `artifacts/linkdroid-android/native-kotlin/`
 **Endpoint produksi yang disiapkan:** `https://103-245-38-142.sslip.io`
 
-> Status penting: endpoint HTTPS tersebut merespons `502 Bad Gateway` saat
-> diverifikasi dari environment Replit. HTTP merespons `301` ke HTTPS. Karena
-> itu domain belum dapat dinyatakan siap untuk backend produksi.
+> Status penting: Nginx dan TLS/Certbot sudah tersedia di VPS, tetapi endpoint
+> HTTPS masih merespons `502 Bad Gateway` karena belum ada backend yang listen di
+> `127.0.0.1:3000`. HTTP merespons `301` ke HTTPS. Jadi lapisan proxy sudah
+> siap, sedangkan aplikasi backend LinkDroid belum berjalan.
+
+## Infrastruktur VPS yang sudah tersedia
+
+Data berikut berasal dari snapshot konfigurasi VPS per 5 September 2026:
+
+### Server dan reverse proxy
+
+- VPS menggunakan Rocky Linux 8.
+- Server bersifat shared/multi-tenant. Aplikasi lain di server yang sama tidak
+  boleh terganggu.
+- Domain produksi: `103-245-38-142.sslip.io`.
+- Nginx memiliki konfigurasi terpisah untuk LinkDroid di
+  `/etc/nginx/conf.d/linkdroid-api.conf`.
+- Nginx meneruskan HTTPS ke `http://127.0.0.1:3000`.
+- Sertifikat TLS dikelola Certbot dan konfigurasi auto-renew sudah tersedia.
+- Header `Upgrade` dan `Connection: upgrade` sudah diteruskan, sehingga endpoint
+  WebSocket signaling dapat menggunakan `wss://103-245-38-142.sslip.io/...`.
+- `proxy_read_timeout` adalah 3600 detik untuk koneksi long-lived.
+- Port internal backend yang harus dipakai adalah `3000`; port ini tidak perlu
+  diekspos langsung ke internet.
+
+### Status layanan saat ini
+
+| Komponen | Status aktual | Catatan |
+| --- | --- | --- |
+| Nginx | Tersedia | Konfigurasi LinkDroid terpisah dan sudah mengarah ke port 3000. |
+| HTTPS/TLS | Tersedia | Sertifikat dikelola Certbot. |
+| Backend LinkDroid | Belum berjalan | Port 3000 kosong; ini penyebab `502 Bad Gateway`. |
+| PostgreSQL service | Tersedia dan berjalan | Hanya listen di `127.0.0.1:5432`. |
+| Database/user LinkDroid | Belum dibuat | Harus dibuat terpisah dari database aplikasi lain. |
+| coturn TURN/STUN | Berjalan | Listen di port 3478 TCP/UDP; realm dan metode kredensial masih perlu dikonfirmasi. |
+| Node.js | Tersedia | Versi yang tercatat di VPS adalah v24.20.0. |
+| PM2 | Tersedia | Proses LinkDroid belum berjalan; rencana nama proses `linkdroid-backend`. |
+
+### Rencana penempatan backend
+
+Backend LinkDroid direncanakan berada di folder terpisah:
+
+`/root/linkdroid-backend`
+
+Nama proses PM2 yang direncanakan:
+
+`linkdroid-backend`
+
+Proses tersebut harus berjalan berdampingan dengan aplikasi lain tanpa mengubah
+konfigurasi atau proses aplikasi lain. Perintah start baru dapat dijalankan
+setelah source backend dan hasil build tersedia.
+
+### TURN/STUN untuk WebRTC
+
+coturn sudah berjalan di port `3478` pada IP publik VPS dan localhost. Aplikasi
+Android nantinya dapat menggunakan ICE server seperti:
+
+`turn:103.245.38.142:3478`
+
+Namun isi `/etc/turnserver.conf` belum tercatat dalam repository, sehingga
+`realm`, `static-auth-secret`, username/password, dan dukungan `turns:` belum
+terkonfirmasi. Kredensial TURN tidak boleh ditulis di source code atau
+`SYSTEM_GAPS.md`.
+
+### Keamanan VPS
+
+- Server shared/multi-tenant harus diperlakukan sebagai lingkungan yang tidak
+  boleh diubah secara global untuk kebutuhan LinkDroid.
+- Terdapat catatan percobaan login SSH yang gagal dan traffic scan bot pada
+  aplikasi lain. Ini bukan bukti kompromi domain LinkDroid, tetapi menunjukkan
+  kebutuhan hardening.
+- Password database, JWT secret, kredensial TURN, dan secret aplikasi harus
+  disimpan melalui environment/secrets, bukan di repository.
+- Hardening SSH dan fail2ban masih menjadi pekerjaan operasional yang belum
+  selesai.
 
 ## Ringkasan kondisi saat ini
 
@@ -372,27 +444,31 @@ yang sesuai di environment.
 
 ### 18. Belum ada backend operasional
 
-Sistem produksi membutuhkan deployment untuk signaling/API pada domain yang
-diberikan, termasuk:
+Lapisan VPS dasar sudah tersedia, tetapi aplikasi backend LinkDroid belum
+dideploy. Sistem produksi masih membutuhkan:
 
-- Domain dan TLS yang sehat. Saat pengecekan 4 September 2026,
-  `https://103-245-38-142.sslip.io` mengembalikan `502 Bad Gateway`, sehingga
-  upstream backend atau reverse proxy masih perlu diperbaiki.
-- Database pengguna dan perangkat.
+- Proses backend yang listen di `127.0.0.1:3000`; Nginx dan TLS sudah
+  meneruskan traffic ke lokasi tersebut.
+- Database dan user PostgreSQL khusus LinkDroid; service PostgreSQL sudah
+  berjalan di localhost.
+- Handler API, WebSocket signaling, dan health check.
 - Penyimpanan konfigurasi.
 - Rate limiting.
 - Monitoring dan logging.
-- Health check.
 - Backup dan pemulihan.
 - Mekanisme upgrade schema.
 
+`502 Bad Gateway` saat ini disebabkan port 3000 kosong, bukan karena konfigurasi
+Nginx atau sertifikat TLS belum tersedia.
+
 ### 19. Konfigurasi endpoint sudah disiapkan, tetapi kontrak belum terhubung
 
-Endpoint domain produksi sudah dicatat sebagai `BuildConfig` untuk menjadi
-tujuan integrasi berikutnya. Belum ada client API, kontrak endpoint,
-konfigurasi WebRTC, logging, atau mode development/production yang benar-benar
-terhubung. Nilai rahasia tidak boleh ditulis langsung ke source code atau
-di-commit ke repository.
+Endpoint domain produksi sudah dicatat sebagai `BuildConfig`, dan client API
+registrasi device sudah tersedia di APK. Endpoint tersebut belum memiliki
+backend yang melayani request. Kontrak WebSocket signaling, konfigurasi WebRTC
+yang memakai coturn, logging, dan mode development/production yang benar-benar
+terhubung masih belum tersedia. Nilai rahasia tidak boleh ditulis langsung ke
+source code atau di-commit ke repository.
 
 ### 20. Belum ada kebijakan privasi dan persetujuan pengguna
 

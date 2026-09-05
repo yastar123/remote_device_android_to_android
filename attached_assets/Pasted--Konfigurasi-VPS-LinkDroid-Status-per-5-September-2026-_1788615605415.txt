@@ -1,0 +1,189 @@
+# Konfigurasi VPS LinkDroid — Status per 5 September 2026
+
+Dokumen ini mencatat apa yang **sudah tersedia dan berjalan** di VPS produksi, lengkap dengan detail konfigurasi, supaya backend/APK LinkDroid bisa disesuaikan tanpa menebak-nebak.
+
+---
+
+## 1. Identitas Server
+
+| Item | Nilai |
+|---|---|
+| Hostname | `rocky8adib` |
+| OS | Rocky Linux 8 |
+| IP Publik | `103.245.38.142` |
+| Domain produksi | `103-245-38-142.sslip.io` |
+| Akses SSH | `root@103.245.38.142` (port 22) |
+| Sifat server | **Shared/multi-tenant** — ada aplikasi lain (`xmoney`, `taekwondo-api.signals99.com`) yang berjalan di server yang sama dan tidak boleh terganggu |
+
+---
+
+## 2. Reverse Proxy (Nginx)
+
+File config: `/etc/nginx/conf.d/linkdroid-api.conf` (terpisah dari `xmoney.conf`, tidak saling bersinggungan)
+
+```nginx
+server {
+    server_name 103-245-38-142.sslip.io;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+    }
+    listen 443 ssl; # managed by Certbot
+    ssl_certificate /etc/letsencrypt/live/103-245-38-142.sslip.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/103-245-38-142.sslip.io/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+server {
+    if ($host = 103-245-38-142.sslip.io) {
+        return 301 https://$host$request_uri;
+    }
+    listen 80;
+    server_name 103-245-38-142.sslip.io;
+    return 404;
+}
+```
+
+**Poin penting untuk aplikasi:**
+- Backend **wajib listen di `127.0.0.1:3000`** (bukan port lain) — nginx sudah diarahkan ke situ.
+- HTTPS + sertifikat sudah aktif via Certbot, auto-renew. Aplikasi tidak perlu urus TLS sendiri.
+- Header `Upgrade`/`Connection: upgrade` sudah diteruskan → **WebSocket sudah didukung** tanpa perlu tambahan config. Endpoint signaling bisa langsung pakai `wss://103-245-38-142.sslip.io/...` dan akan otomatis di-proxy ke backend di port 3000.
+- `proxy_read_timeout 3600s` — koneksi long-lived (seperti WebSocket sesi remote) tidak akan diputus nginx sampai 1 jam idle.
+- **Jangan ganti port 3000** tanpa mengubah file config ini juga, dan jangan edit file `xmoney.conf`.
+
+---
+
+## 3. Status Endpoint Saat Ini
+
+| Cek | Hasil |
+|---|---|
+| `https://103-245-38-142.sslip.io/` | **502 Bad Gateway** — karena belum ada proses yang listen di port 3000 |
+| `http://103-245-38-142.sslip.io/` | 301 redirect ke HTTPS (berfungsi normal) |
+| Port 3000 | **Kosong**, dikonfirmasi via `ss -tlnp` — aman dipakai, tidak bentrok proses lain |
+
+→ **502 akan otomatis hilang** begitu backend berhasil dijalankan di port 3000. Tidak perlu ubah nginx.
+
+---
+
+## 4. Database (PostgreSQL)
+
+| Item | Nilai |
+|---|---|
+| Status | Sudah terpasang & berjalan |
+| Host/Port | `127.0.0.1:5432` (hanya localhost, tidak expose ke publik — bagus untuk keamanan) |
+| Database/user untuk LinkDroid | **Belum dibuat** — perlu database & role baru khusus, terpisah dari data aplikasi lain di server ini |
+
+**Yang perlu disiapkan sebelum aplikasi jalan:**
+```bash
+sudo -u postgres createuser linkdroid --pwprompt
+sudo -u postgres createdb linkdroid_db -O linkdroid
+```
+Connection string yang nanti dipakai backend (contoh):
+```
+DATABASE_URL=postgresql://linkdroid:PASSWORD@127.0.0.1:5432/linkdroid_db
+```
+
+---
+
+## 5. TURN/STUN Server (untuk WebRTC)
+
+| Item | Nilai |
+|---|---|
+| Software | `coturn`, sudah berjalan (proses `turnserver`) |
+| Port | `3478` (TCP & UDP), listen di `103.245.38.142:3478` dan `127.0.0.1:3478` |
+| Status | **Sudah siap dipakai**, tidak perlu instal ulang |
+
+**Yang perlu dicek/didapat sebelum dipakai di aplikasi:**
+- Isi file `/etc/turnserver.conf` untuk tahu `realm`, apakah pakai `static-auth-secret` atau user/password statis, dan apakah TLS TURN (`turns:`) diaktifkan.
+- Kredensial TURN ini nanti dimasukkan ke config WebRTC di sisi Android (ICE server list), contoh format:
+```json
+{
+  "urls": "turn:103.245.38.142:3478",
+  "username": "...",
+  "credential": "..."
+}
+```
+(Nilai `username`/`credential` perlu diambil dari `/etc/turnserver.conf` di VPS, belum dikonfirmasi di dokumen ini.)
+
+---
+
+## 6. Process Manager (PM2)
+
+| Item | Nilai |
+|---|---|
+| Proses lain di server | `xmoney` (fork mode, path `/root/trading/dist/server.cjs`, tidak boleh diganggu) |
+| Node.js version | v24.20.0 (dikonfirmasi dari `pm2 show xmoney`) |
+| Lokasi kerja LinkDroid backend (rencana) | `/root/linkdroid-backend` — folder terpisah, tidak overlap dengan `/root/trading` |
+| Nama proses PM2 (rencana) | `linkdroid-backend` — id/nama berbeda dari `xmoney`, aman dijalankan berdampingan |
+
+**Perintah start (setelah kode backend siap):**
+```bash
+cd /root/linkdroid-backend
+pm2 start dist/server.js --name linkdroid-backend
+pm2 save
+```
+
+---
+
+## 7. Kontrak API yang Sudah Ditulis di APK
+
+APK sudah mengirim request berikut, backend harus menyediakan endpoint yang sesuai:
+
+**Endpoint:** `POST https://103-245-38-142.sslip.io/api/v1/devices/register`
+
+**Body JSON:**
+```json
+{
+  "email": "akun pengguna",
+  "deviceId": "ID lokal 9 digit",
+  "deviceName": "manufacturer dan model Android",
+  "androidVersion": "versi Android",
+  "appVersion": "versi aplikasi"
+}
+```
+
+- Respons **2xx** → APK menampilkan "Device sudah terdaftar di server."
+- Respons **non-2xx** (termasuk saat ini 502) → APK menampilkan gagal dan menyediakan tombol coba lagi di menu Pengaturan.
+- **Belum ada access token** di request ini karena login APK masih lokal/demo — begitu auth server-side dibuat, kontrak ini perlu ditambah header `Authorization: Bearer <token>`.
+
+---
+
+## 8. Keamanan yang Perlu Diperhatikan
+
+| Isu | Catatan |
+|---|---|
+| Login SSH root | 2.507 percobaan login gagal tercatat — server sedang dibrute-force dari internet. Disarankan nonaktifkan password login (`PermitRootLogin prohibit-password`), pakai SSH key, dan pasang `fail2ban`. |
+| Scan bot PHP webshell | Muncul di log nginx (`das.php`, `adminan.php`, dll) ditujukan ke `taekwondo-api.signals99.com` — ini traffic bot otomatis umum di internet, bukan tanda kompromi pada domain LinkDroid, tapi menandakan server ini sering discan. |
+| Secret/credential | Jangan taruh password DB, JWT secret, atau kredensial TURN langsung di source code — gunakan file `.env` yang tidak di-commit ke repo. |
+
+---
+
+## 9. Ringkasan: Apa yang Perlu Disesuaikan di Sisi Aplikasi
+
+| Konfigurasi Aplikasi | Nilai yang Harus Dipakai |
+|---|---|
+| Base URL API | `https://103-245-38-142.sslip.io` |
+| Port internal backend (jangan expose langsung, biarkan lewat nginx) | `3000` |
+| Database | `postgresql://linkdroid:<password>@127.0.0.1:5432/linkdroid_db` (setelah dibuat) |
+| TURN server | `turn:103.245.38.142:3478` + kredensial dari `/etc/turnserver.conf` |
+| WebSocket signaling | Bisa langsung pakai `wss://103-245-38-142.sslip.io/<path-ws-kamu>`, sudah didukung nginx tanpa config tambahan |
+| Endpoint device registration | `POST /api/v1/devices/register` sesuai skema yang sudah ditulis di APK |
+
+---
+
+## 10. Yang Masih Perlu Dikerjakan (Belum Ada di VPS)
+
+- [ ] Aplikasi backend yang benar-benar listen di port 3000 (penyebab 502 saat ini)
+- [ ] Database & user PostgreSQL khusus LinkDroid
+- [ ] Endpoint auth (register/login) dengan JWT — menggantikan login lokal APK
+- [ ] Endpoint `POST /api/v1/devices/register` yang benar-benar tersambung ke DB
+- [ ] Endpoint/handler WebSocket signaling (request/approve/reject/end sesi)
+- [ ] Kredensial TURN yang dikonfirmasi dari `/etc/turnserver.conf` untuk dimasukkan ke config Android
+- [ ] Proses PM2 baru (`linkdroid-backend`) berjalan berdampingan dengan `xmoney`
+- [ ] Hardening SSH (`PermitRootLogin prohibit-password`, `fail2ban`)
