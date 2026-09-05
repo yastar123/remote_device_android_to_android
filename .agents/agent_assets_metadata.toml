@@ -14,3 +14,17 @@ mtime_ms = 1788525127917
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:9a14f397-93c6-463c-8129-84c91bd642fa/1741ce74-4f98-4877-8750-8e0c50ed0677/36e63214-6735-40a6-8a07-729c538b6fa6"
 storage_version_token = "1788525138363673"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "8wqVQRAiBGH5CfPqWDODB"
+uri = "file://DEPLOY_VPS.md"
+type = "text"
+title = "Tutorial Deploy LinkDroid ke VPS"
+description = "Panduan deployment backend LinkDroid dari repository ini ke VPS dengan PostgreSQL, Prisma, PM2, Nginx, HTTPS, WebSocket, firewall, verifikasi, update, dan troubleshooting."
+logical_id = "1828207b-d794-4a17-b3b0-9184aad18a76"
+content_hash = "sha256:f6f7280740eae7f98e90a7f572f2b6c0ca3b731c0512358b9cd63b7eb59247bf"
+size = 16352
+mtime_ms = 1788618504800
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:66350cfd-2716-4736-a596-71e12fdab63c/1828207b-d794-4a17-b3b0-9184aad18a76/c3cd1693-e614-41cd-af1f-dbf5f1faa05f"
+storage_version_token = "1788618516528224"
+content_type = "text/markdown"
