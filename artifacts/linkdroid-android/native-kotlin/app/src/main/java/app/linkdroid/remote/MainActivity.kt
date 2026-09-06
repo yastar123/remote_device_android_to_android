@@ -78,6 +78,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
+private data class PendingSessionSignal(
+    val fromDeviceId: String,
+    val signalType: String,
+    val payload: org.json.JSONObject,
+)
+
 class MainActivity : ComponentActivity() {
     private val secureTokenStore by lazy { SecureTokenStore(applicationContext) }
     private val notificationPermissionLauncher =
@@ -129,6 +135,7 @@ class MainActivity : ComponentActivity() {
         var submittingTask by rememberSaveable { mutableStateOf(false) }
         var submittedTaskId by rememberSaveable { mutableStateOf<String?>(null) }
         var pendingIncomingSession by remember { mutableStateOf<IncomingSession?>(null) }
+        val pendingSessionSignals = remember { mutableMapOf<String, MutableList<PendingSessionSignal>>() }
         var adminTasks by remember { mutableStateOf<List<BackendTaskSummary>>(emptyList()) }
         val registrationScope = rememberCoroutineScope()
         val currentDeviceId = remember { getOrCreateDeviceId() }
@@ -302,6 +309,64 @@ class MainActivity : ComponentActivity() {
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
+        DisposableEffect(accessToken, currentDeviceId, activeRemoteSession?.sessionId, notificationsEnabled) {
+            if (accessToken.isNullOrBlank() || activeRemoteSession != null) {
+                onDispose { }
+            } else {
+                val incomingSignaling = SignalingClient(
+                    baseUrl = BuildConfig.BACKEND_BASE_URL,
+                    accessToken = accessToken.orEmpty(),
+                    deviceId = currentDeviceId,
+                    listener = object : SignalingClient.Listener {
+                        override fun onConnected() {
+                            runOnUiThread { message = "Menunggu permintaan monitoring." }
+                        }
+
+                        override fun onSessionRequested(session: IncomingSession) {
+                            runOnUiThread {
+                                pendingIncomingSession = session
+                                message = "Permintaan monitoring baru dari ${session.requesterEmail}."
+                                if (notificationsEnabled) {
+                                    showSessionNotification("Permintaan monitoring dari ${session.requesterEmail}.")
+                                }
+                            }
+                        }
+
+                        override fun onSessionEvent(type: String, sessionId: String) {
+                            if (type == "session.ended" || type == "session.expired") {
+                                runOnUiThread {
+                                    pendingIncomingSession = null
+                                    synchronized(pendingSessionSignals) {
+                                        pendingSessionSignals.remove(sessionId)
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun onSessionSignal(
+                            sessionId: String,
+                            fromDeviceId: String,
+                            signalType: String,
+                            payload: org.json.JSONObject,
+                        ) {
+                            synchronized(pendingSessionSignals) {
+                                val signals = pendingSessionSignals[sessionId] ?: mutableListOf()
+                                if (signals.size < 64) {
+                                    signals += PendingSessionSignal(fromDeviceId, signalType, payload)
+                                    pendingSessionSignals[sessionId] = signals
+                                }
+                            }
+                        }
+
+                        override fun onError(messageText: String) {
+                            runOnUiThread { message = "Signaling: $messageText" }
+                        }
+                    },
+                )
+                incomingSignaling.connect()
+                onDispose { incomingSignaling.close() }
+            }
+        }
         DisposableEffect(
             accessToken,
             currentDeviceId,
@@ -312,11 +377,20 @@ class MainActivity : ComponentActivity() {
         ) {
             val token = accessToken
             val currentSession = activeRemoteSession
-            if (token.isNullOrBlank() || currentSession == null) {
+            if (
+                token.isNullOrBlank() ||
+                currentSession == null ||
+                (currentSession.role == RemoteSession.Role.RECEIVER && projectionPermission == null)
+            ) {
                 onDispose { }
             } else {
                 lateinit var webRtc: WebRtcSessionManager
                 lateinit var signaling: SignalingClient
+                var signalingConnected = false
+                var sessionApproved = false
+                fun beginNegotiationWhenReady() {
+                    if (signalingConnected && sessionApproved) webRtc.beginNegotiation()
+                }
                 webRtc = WebRtcSessionManager(
                     context = this@MainActivity,
                     sessionId = currentSession.sessionId,
@@ -351,7 +425,9 @@ class MainActivity : ComponentActivity() {
                     sessionId = currentSession.sessionId,
                     listener = object : SignalingClient.Listener {
                         override fun onConnected() {
+                            signalingConnected = true
                             runOnUiThread { message = "Signaling server tersambung." }
+                            beginNegotiationWhenReady()
                         }
 
                         override fun onSessionRequested(session: IncomingSession) {
@@ -367,11 +443,12 @@ class MainActivity : ComponentActivity() {
                         override fun onSessionEvent(type: String, sessionId: String) {
                             runOnUiThread {
                                 if (type == "session.approved" || type == "session.active") {
+                                    sessionApproved = true
                                     message = "Permintaan monitoring disetujui petugas."
                                     if (notificationsEnabled) {
                                         showSessionNotification("Sesi monitoring aktif.")
                                     }
-                                    webRtc.beginNegotiation()
+                                    beginNegotiationWhenReady()
                                 } else if (type == "session.rejected") {
                                     message = "Permintaan monitoring ditolak petugas."
                                     cancelSessionNotification()
@@ -441,8 +518,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 webRtcSessionManager = webRtc
-                webRtc.start()
+                runCatching { webRtc.start() }
+                    .onFailure { error ->
+                        message = "WebRTC gagal dimulai: ${error.message ?: "periksa perangkat dan izin layar"}"
+                        webRtcSessionManager = null
+                    }
                 signaling.connect()
+                val bufferedSignals = synchronized(pendingSessionSignals) {
+                    pendingSessionSignals.remove(currentSession.sessionId).orEmpty()
+                }
+                bufferedSignals.forEach { signal ->
+                    webRtc.handleSignal(signal.signalType, signal.payload)
+                }
                 onDispose {
                     sendRemoteCommand = null
                     webRtc.stop()
@@ -671,6 +758,9 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }.onSuccess {
                                         pendingIncomingSession = null
+                                        webRtcSessionManager?.stop()
+                                        webRtcSessionManager = null
+                                        sessionCoordinator.stop()
                                         sessionCoordinator.start(
                                             RemoteSession(
                                                 sessionId = incoming.sessionId,

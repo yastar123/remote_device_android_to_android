@@ -7,10 +7,12 @@
   "scripts": {
     "backend:dev": "tsx watch backend/src/server.ts",
     "backend:build": "tsc -p tsconfig.backend.json",
+    "backend:test": "node --import tsx --test backend/src/*.test.ts",
     "backend:start": "node backend/dist/server.js",
     "backend:prisma:generate": "prisma generate --schema backend/prisma/schema.prisma",
     "backend:prisma:migrate": "prisma migrate deploy --schema backend/prisma/schema.prisma",
-    "backend:prisma:format": "prisma format --schema backend/prisma/schema.prisma"
+    "backend:prisma:format": "prisma format --schema backend/prisma/schema.prisma",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path (npm prefix) 'scripts/build-android.ps1')\""
   },
   "repository": {
     "type": "git",

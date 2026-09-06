@@ -50,6 +50,7 @@ class SignalingClient(
     private var pingTask: ScheduledFuture<*>? = null
     private var reconnectAttempt = 0
     @Volatile private var closed = false
+    private val pendingSignals = ArrayDeque<String>()
 
     @Synchronized
     fun connect() {
@@ -68,6 +69,11 @@ class SignalingClient(
                     reconnectAttempt = 0
                     reconnectTask?.cancel(false)
                     startPing()
+                    synchronized(pendingSignals) {
+                        while (pendingSignals.isNotEmpty()) {
+                            webSocket.send(pendingSignals.removeFirst())
+                        }
+                    }
                     listener.onConnected()
                 }
 
@@ -119,14 +125,19 @@ class SignalingClient(
     }
 
     fun sendSignal(sessionId: String, signalType: String, payload: JSONObject) {
-        socket?.send(
-            JSONObject()
-                .put("type", "session.signal")
-                .put("sessionId", sessionId)
-                .put("signalType", signalType)
-                .put("payload", payload)
-                .toString(),
-        )
+        val message = JSONObject()
+            .put("type", "session.signal")
+            .put("sessionId", sessionId)
+            .put("signalType", signalType)
+            .put("payload", payload)
+            .toString()
+        val activeSocket = socket
+        if (activeSocket?.send(message) != true) {
+            synchronized(pendingSignals) {
+                pendingSignals.addLast(message)
+                while (pendingSignals.size > 64) pendingSignals.removeFirst()
+            }
+        }
     }
 
     fun sendCommand(sessionId: String, commandId: String, command: RemoteCommand): Boolean =
@@ -160,6 +171,7 @@ class SignalingClient(
         reconnectTask?.cancel(true)
         reconnectTask = null
         stopPing()
+        synchronized(pendingSignals) { pendingSignals.clear() }
         socket?.close(1000, "Activity closed")
         socket = null
         reconnectExecutor.shutdownNow()

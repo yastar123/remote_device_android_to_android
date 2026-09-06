@@ -154,8 +154,8 @@ export class SignalingHub {
         id: true,
         requesterId: true,
         receiverId: true,
-        controllerDeviceId: true,
-        receiverDeviceId: true,
+        controllerDevice: { select: { deviceId: true } },
+        receiverDevice: { select: { deviceId: true } },
         status: true,
       },
     });
@@ -167,10 +167,10 @@ export class SignalingHub {
     }
     const isController =
       session.requesterId === client.user.id &&
-      session.controllerDeviceId === client.deviceId;
+      session.controllerDevice.deviceId === client.deviceId;
     const isReceiver =
       session.receiverId === client.user.id &&
-      session.receiverDeviceId === client.deviceId;
+      session.receiverDevice.deviceId === client.deviceId;
     if (!isController && !isReceiver) {
       client.socket.send(
         JSON.stringify({ type: "error", error: "SESSION_FORBIDDEN" }),
@@ -208,7 +208,7 @@ export class SignalingHub {
         );
         return;
       }
-      this.emitToDevice(session.receiverId, session.receiverDeviceId, {
+      this.emitToDevice(session.receiverId, session.receiverDevice.deviceId, {
         type: "session.command",
         sessionId: session.id,
         commandId: message.commandId,
@@ -219,7 +219,7 @@ export class SignalingHub {
         const pending = this.commandTimeouts.get(message.commandId);
         if (!pending || pending.sessionId !== session.id) return;
         this.commandTimeouts.delete(message.commandId);
-        this.emitToDevice(session.requesterId, session.controllerDeviceId, {
+        this.emitToDevice(session.requesterId, session.controllerDevice.deviceId, {
           type: "session.command.result",
           sessionId: session.id,
           commandId: message.commandId,
@@ -250,7 +250,7 @@ export class SignalingHub {
       }
       clearTimeout(pending.timeout);
       this.commandTimeouts.delete(message.commandId);
-      this.emitToDevice(session.requesterId, session.controllerDeviceId, {
+      this.emitToDevice(session.requesterId, session.controllerDevice.deviceId, {
         type: "session.command.result",
         sessionId: session.id,
         commandId: message.commandId,
@@ -265,8 +265,8 @@ export class SignalingHub {
       ? session.receiverId
       : session.requesterId;
     const targetDeviceId = isController
-      ? session.receiverDeviceId
-      : session.controllerDeviceId;
+      ? session.receiverDevice.deviceId
+      : session.controllerDevice.deviceId;
     this.emitToDevice(targetUserId, targetDeviceId, {
       type: "session.signal",
       sessionId: session.id,

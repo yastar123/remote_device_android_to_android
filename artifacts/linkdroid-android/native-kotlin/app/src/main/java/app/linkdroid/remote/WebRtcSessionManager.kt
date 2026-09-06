@@ -14,12 +14,14 @@ import org.webrtc.VideoTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
+import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoSource
+import org.webrtc.MediaStreamTrack
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -34,7 +36,12 @@ class WebRtcSessionManager(
     private val onRemoteVideoTrack: (VideoTrack?) -> Unit,
     private val onCommandResult: (String, Boolean, String?) -> Unit,
 ) {
+    private companion object {
+        private val factoryInitialized = AtomicBoolean(false)
+    }
+
     private val started = AtomicBoolean(false)
+    private val negotiationStarted = AtomicBoolean(false)
     private val eglBase = EglBase.create()
     private val iceServers = buildIceServers(backendIceServers)
     private var factory: PeerConnectionFactory? = null
@@ -53,11 +60,13 @@ class WebRtcSessionManager(
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
-                .setEnableInternalTracer(false)
-                .createInitializationOptions(),
-        )
+        if (factoryInitialized.compareAndSet(false, true)) {
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+                    .setEnableInternalTracer(false)
+                    .createInitializationOptions(),
+            )
+        }
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
         factory = PeerConnectionFactory.builder()
@@ -79,6 +88,12 @@ class WebRtcSessionManager(
         }
         peerConnection = connection
         if (role == RemoteSession.Role.CONTROLLER) {
+            connection.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(
+                    RtpTransceiver.RtpTransceiverDirection.RECV_ONLY,
+                ),
+            )
             commandChannel = connection.createDataChannel("linkdroid-commands", DataChannel.Init())
             registerDataChannel(commandChannel)
         } else {
@@ -88,17 +103,25 @@ class WebRtcSessionManager(
     }
 
     fun beginNegotiation() {
-        if (!started.get() || role != RemoteSession.Role.CONTROLLER) return
+        if (
+            !started.get() ||
+            role != RemoteSession.Role.CONTROLLER ||
+            !negotiationStarted.compareAndSet(false, true)
+        ) return
         val connection = peerConnection ?: return
         connection.createOffer(
             sdpObserver(
                 onSuccess = { description ->
+                    val offer = description ?: return@sdpObserver
+                    onStateChanged(
+                        "Offer dibuat: video=${offer.description.contains("m=video")}",
+                    )
                     connection.setLocalDescription(
                         sdpObserver(
                             onSuccess = {
                                 sendSignal(
                                     "offer",
-                                    JSONObject().put("sdp", description?.description.orEmpty()),
+                                    JSONObject().put("sdp", offer.description),
                                 )
                             },
                             onFailure = { onStateChanged("Local SDP gagal: $it") },
@@ -132,12 +155,13 @@ class WebRtcSessionManager(
                             connection.createAnswer(
                                 sdpObserver(
                                     onSuccess = { answer ->
+                                        val localAnswer = answer ?: return@sdpObserver
                                         connection.setLocalDescription(
                                             sdpObserver(
                                                 onSuccess = {
                                                     sendSignal(
                                                         "answer",
-                                                        JSONObject().put("sdp", answer?.description.orEmpty()),
+                                                        JSONObject().put("sdp", localAnswer.description),
                                                     )
                                                 },
                                                 onFailure = { onStateChanged("Local answer gagal: $it") },
